@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "SNOWFLOW ported to Three.js / WebGL2 (GLSL ES 3.0 raw shaders)",
+  "description": "SNOWFLOW — Battle of Hoth. Ported to Three.js / WebGL2 (GLSL ES 3.0 raw shaders)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
