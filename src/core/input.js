@@ -32,6 +32,12 @@ export const input = {
     sprint: false, // shift
     rise: false, // E latch — the speeder's cruise altitude; nothing on foot
 
+    // The throttle flight scheme (`S.flightThrottle`), all three inert in the
+    // classic scheme and on foot — see pollInput.
+    thrust: false, // shift — the throttle
+    boost: false, // E (or Q) — the reheat
+    vert: 0, // S climbs (+1), W dives (-1)
+
     /** @type {number} 0 = none, else 1..5 — set on keydown, cleared each frame */
     spellPressed: 0,
     /** @type {boolean} spell 2 (Ribbon) is a held cast */
@@ -151,7 +157,9 @@ export function initInput(canvas, hooks) {
         }
         // E is a latch, not a hold: tap to transition up to cruise altitude,
         // tap again to settle back to the deck. The controller eases both ways.
-        if (e.code === "KeyE") {
+        // Under the throttle scheme W/S own the vertical instead, and E falls
+        // through to the held keys as the reheat.
+        if (e.code === "KeyE" && S.flightThrottle !== true) {
             if (!e.repeat) input.rise = !input.rise;
             return;
         }
@@ -207,9 +215,14 @@ export function pollInput() {
     if (keys.KeyD || keys.ArrowRight) x += 1;
     if (keys.KeyA || keys.ArrowLeft) x -= 1;
 
-    // Clamp to a unit disc so diagonals aren't faster.
+    const flying = S.speeder !== false;
+    const throttle = flying && S.flightThrottle === true;
+
+    // Clamp to a unit disc so diagonals aren't faster. Not under the throttle
+    // scheme, where W/S are the vertical rather than an axis sharing the disc
+    // with the steer — normalising would soften A/D whenever they are held.
     let len = Math.sqrt(x * x + z * z);
-    if (len > 1) {
+    if (len > 1 && !throttle) {
         x /= len;
         z /= len;
         len = 1;
@@ -228,7 +241,19 @@ export function pollInput() {
     input.moveX = x;
     input.moveZ = z;
     input.moving = len > 0.001;
-    input.sprint = !!(keys.ShiftLeft || keys.ShiftRight) || touch.sprint;
+    const shift = !!(keys.ShiftLeft || keys.ShiftRight) || touch.sprint;
+    input.sprint = shift;
+
+    // The throttle scheme's own axes, dead outside it. Shift (or the touch
+    // sprint button) opens the throttle, E or Q lights the reheat, and W/S
+    // fly the craft down and up — stick-style, push forward to descend. On
+    // touch the stick's vertical axis is the climb.
+    input.thrust = throttle && shift;
+    input.boost = throttle && !!(keys.KeyE || keys.KeyQ);
+    input.vert = !throttle ? 0
+        : touch.active ? touch.z
+            : (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+
     // Any binding holds the slide; releasing one while another is down must not
     // end it.
     // One trigger, two meanings. On foot it is the slide; in the speeder there is
@@ -237,7 +262,6 @@ export function pollInput() {
     // consumer keeps "what is the player holding" in the one place that already
     // answers that question.
     const held = rmbHeld || !!keys.Space || touch.surf;
-    const flying = S.speeder !== false;
     // Flying, the slide is held *permanently*. That is not a trick to save a
     // controller: the momentum-carrying mode is what the craft's motion should
     // feel like — thrust, drift, grip that bleeds into a slide through a hard

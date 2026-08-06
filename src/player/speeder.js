@@ -49,6 +49,9 @@ const HOVER_SPEED_LIFT = 1.5;
 const BANK = 0.62;
 /** Nose-down under power, radians at full throttle. */
 const PITCH = 0.16;
+/** Throttle scheme: radians of nose along the vertical at full climb/dive
+ *  rate — up climbing, down diving, the pitch answer to the steer's bank. */
+const VERT_PITCH = 0.34;
 /** Idle wallow: metres, and radians of roll, at a standstill. */
 const BOB_HEIGHT = 0.22;
 const BOB_ROLL = 0.05;
@@ -537,9 +540,18 @@ export class Speeder {
         // deck flies level over the dunes it no longer traces.
         const slope = Math.max(-0.35, Math.min(0.35, (nose - tail) / (2 * half)))
             * (1 - lift01);
+        // Under the throttle scheme the vertical shows on the nose too:
+        // proportional to the eased climb *rate*, so the attitude levels off
+        // on its own the moment the altitude holds, with a little extra on
+        // the dive so W visibly points the craft at the snow. The wingman's
+        // pilot publishes no climbRate and the classic scheme keeps its old
+        // attitude exactly.
+        const vr = S.flightThrottle === true
+            ? Math.max(-1, Math.min(1, (c.climbRate ?? 0) / 7)) : 0;
         const wantPitch =
             -Math.min(1, Math.abs(along) / 19) * PITCH * Math.sign(along || 1)
-            + slope * 0.3;
+            + slope * 0.3
+            + vr * VERT_PITCH * (vr < 0 ? 1.25 : 1);
 
         if (!this._settled) {
             this.position.set(c.position.x, wantY, c.position.z);

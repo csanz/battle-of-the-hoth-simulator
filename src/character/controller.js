@@ -36,6 +36,12 @@ const WALK_DECEL = 30;
 const SURF_MAX = 19.5;
 const SURF_THRUST = 11.0;
 /**
+ * Throttle scheme only: the open throttle cruises this much beyond the
+ * board's terminal speed — the craft is a fighter, not a sled — with the E
+ * reheat multiplying on top. The spool stays the same eased ramp.
+ */
+const FLY_CRUISE = 1.5;
+/**
  * What shift is worth in the slide.
  *
  * On foot it picks run over walk; sliding, there was nothing for it to do —
@@ -143,6 +149,13 @@ export class CharacterController {
          * curve rather than a ceiling it bangs into.
          */
         this._climb = 0;
+        /** Throttle scheme: where the vertical keys have flown the craft to. */
+        this._climbWant = 0;
+        /** The vertical keys, slewed (~80 ms) so the climb engages as a ramp. */
+        this._vertEase = 0;
+        /** Vertical rate of the eased climb, m/s — the hull pitches on this. */
+        this.climbRate = 0;
+        this._wasThrottle = false;
         /** Slow-smoothed ground level the cruise path flattens toward. */
         this._cruiseGround = NaN;
         /** Flattened base path (terrain-hugging at 0 climb, level at cruise). */
@@ -191,18 +204,52 @@ export class CharacterController {
         this.terrain.normalAt(this.position.x, this.position.z, this.groundNormal);
 
         // ---- climb (flying) -------------------------------------------------
-        // Hold E to rise off the deck; S stays what it always was, the brake.
-        // The climb is an exponential approach to `speederClimbMax`, so it can
-        // never overshoot the configured ceiling and release settles it back
-        // down the same smooth way.
+        // Two schemes share this block and the eased `_climb` under them.
+        //
+        // Classic (default): hold nothing — E is a latch. The climb is an
+        // exponential approach to `speederClimbMax`, so it can never overshoot
+        // the configured ceiling and release settles it back the same way.
+        //
+        // Throttle (`S.flightThrottle`): free flight on the vertical. The held
+        // key — slewed like the steer, so it engages as a ramp — walks a target
+        // height between the deck and `speederCeiling` at `speederClimbSpeed`
+        // m/s, and letting go *holds the altitude* rather than settling.
         const flyingNow = S.speeder !== false && this.surf > 0.5;
-        const climbMax = Math.max(0, S.speederClimbMax || 0);
-        const wantUp = flyingNow && input.rise ? climbMax : 0;
+        const throttleMode = flyingNow && S.flightThrottle === true;
+        if (throttleMode !== this._wasThrottle) {
+            // Mid-flight scheme change: adopt the current height as the flown
+            // target so nothing jumps, and clear the classic latch.
+            this._wasThrottle = throttleMode;
+            this._climbWant = this._climb;
+            input.rise = false;
+        }
         const climbRate = Math.max(0.1, S.speederClimbRate || 2.2);
-        this._climb = expDamp(
-            this._climb, wantUp, wantUp > 0 ? climbRate : climbRate * 0.6, h
-        );
-        this.lift01 = climbMax > 1e-6 ? Math.min(1, this._climb / climbMax) : 0;
+        const prevClimb = this._climb;
+        let liftDenom;
+        if (throttleMode) {
+            const ceiling = Math.max(0, S.speederCeiling || 0);
+            this._vertEase = expDamp(this._vertEase, input.vert, 12, h);
+            this._climbWant = clamp(
+                this._climbWant + this._vertEase * (S.speederClimbSpeed || 9) * h,
+                0, ceiling
+            );
+            this._climb = expDamp(
+                this._climb, this._climbWant,
+                this._climbWant > this._climb ? climbRate * 2 : climbRate, h
+            );
+            liftDenom = ceiling;
+        } else {
+            const climbMax = Math.max(0, S.speederClimbMax || 0);
+            const wantUp = flyingNow && input.rise ? climbMax : 0;
+            this._climb = expDamp(
+                this._climb, wantUp, wantUp > 0 ? climbRate : climbRate * 0.6, h
+            );
+            this._climbWant = this._climb;
+            this._vertEase = 0;
+            liftDenom = climbMax;
+        }
+        this.climbRate = h > 1e-6 ? (this._climb - prevClimb) / h : 0;
+        this.lift01 = liftDenom > 1e-6 ? Math.min(1, this._climb / liftDenom) : 0;
         /** Published metres of climb — the speeder adds it to its hover height. */
         this.climb = this._climb;
 
@@ -342,14 +389,28 @@ export class CharacterController {
         // dies). The hard speed cap below still exists, but its ceiling now
         // glides down over about a second instead of halving the velocity in
         // one frame on shift-release.
-        this._boost = expDamp(this._boost, input.sprint ? BOOST : 1, input.sprint ? 3.0 : 1.4, h);
-        const boost = this._boost;
+        const throttleMode = flying && S.flightThrottle === true;
+        const boostHeld = throttleMode ? input.boost : input.sprint;
+        this._boost = expDamp(this._boost, boostHeld ? BOOST : 1, boostHeld ? 3.0 : 1.4, h);
+        const boost = this._boost * (throttleMode ? FLY_CRUISE : 1);
         let thrust = SURF_THRUST * boost + slopeAssist;
 
-        // The throttle spools the same way (~110 ms), so W engages thrust as a
-        // ramp the jet's own eased flame actually matches, instead of the hull
-        // lurching a frame before the flame answers.
-        this._drive = expDamp(this._drive, input.moveZ, 9, h);
+        // The throttle spools the same way (~110 ms), so the key engages thrust
+        // as a ramp the jet's own eased flame actually matches, instead of the
+        // hull lurching a frame before the flame answers. Under the throttle
+        // scheme that key is shift — W/S belong to the vertical — and there is
+        // no reverse gear: a craft that can dive out of a run doesn't back up.
+        this._drive = expDamp(
+            this._drive,
+            throttleMode ? (input.thrust ? 1 : 0) : input.moveZ,
+            9, h
+        );
+
+        // Published for the presentation, which prefers these over its raw
+        // keyboard fallbacks (the wingman's pilot publishes the same pair) —
+        // so the jet plume answers the throttle, whichever key that is.
+        this.driveHeld = throttleMode ? input.thrust : input.moving;
+        this.boostHeld = boostHeld;
 
         // A board under a rider is always being pushed — that is what a slide is,
         // and letting go means stopping pushing. A craft holding station is not

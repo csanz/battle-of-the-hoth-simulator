@@ -325,6 +325,17 @@ export const S = {
      * second: 2.2 reaches ~90% of the ceiling in about a second.
      */
     speederClimbRate: 2.2,
+    /**
+     * The throttle flight scheme (overlay "Throttle flight"). On: shift is
+     * the throttle, S climbs and W dives — a held vertical axis walking a
+     * target at `speederClimbSpeed` m/s up to `speederCeiling` — and E is
+     * the reheat. Off (default): the classic scheme above, untouched — W/S
+     * thrust and brake, shift boost, E the cruise-altitude latch. Live, so
+     * the two can be A/B'd mid-flight; the switch adopts the current height.
+     */
+    flightThrottle: false,
+    speederClimbSpeed: 9.0,
+    speederCeiling: 24.0,
 
     // ----------------------------------------------------------------- fleet
     /**
@@ -630,6 +641,9 @@ export const SCHEMA = [
             { k: "camBoostBreath", l: "Boost breath", t: "f", min: 0, max: 2, step: 0.01 },
             { k: "speederClimbMax", l: "Climb height", t: "f", min: 0, max: 30, step: 0.5 },
             { k: "speederClimbRate", l: "Climb response", t: "f", min: 0.3, max: 6, step: 0.1 },
+            { k: "flightThrottle", l: "Throttle flight", t: "b" },
+            { k: "speederClimbSpeed", l: "Climb speed", t: "f", min: 2, max: 20, step: 0.5 },
+            { k: "speederCeiling", l: "Flight ceiling", t: "f", min: 4, max: 40, step: 1 },
         ],
     },
     {
