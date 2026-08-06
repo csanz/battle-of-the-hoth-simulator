@@ -484,14 +484,13 @@ export const S = {
      */
     ambienceVolume: 0.34,
     /**
-     * The score's level, and the same number as the bed's on purpose.
-     *
-     * The two files are loudness-matched to each other in the manifest — see the
-     * `music` entry's measured EBU R 128 gain — so equal fader positions really
-     * are equal loudness, and "the music sits at the same level as the wind" is a
-     * property of the numbers rather than of somebody's monitors.
+     * The score's level. The two files are loudness-matched to each other in
+     * the manifest — see the `music` entry's measured EBU R 128 gain — so
+     * fader positions compare honestly: this sits a step above the bed on
+     * purpose, the score leading the wind now that the cannons no longer sit
+     * on a loudness floor at every range.
      */
-    musicVolume: 0.34,
+    musicVolume: 0.45,
     sfxVolume: 1.0,
 
     // --------------------------------------------------------------- systems

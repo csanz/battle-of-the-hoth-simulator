@@ -456,9 +456,13 @@ export class Soundscape {
             // No `gainMul`/`rateMul` here: those exist to make the *shared*
             // step sample read as a smaller machine, and each herd's cannon is
             // its own recording with its own manifest level. Distance is the
-            // only thing that scales a shot.
+            // only thing that scales a shot — all the way to zero. This used
+            // to sit on a 0.25 floor, and a floor under a battlefield's worth
+            // of cannon is a barrage at every range that buries the score;
+            // squared falloff with no floor is what makes closing on the
+            // machines something you *hear* happen.
             this.audio.play(shotKey, {
-                gain: 0.25 + 0.75 * near * near,
+                gain: near * near,
                 rate: 0.94 + Math.random() * 0.1,
                 delay: Math.min(1.6, d / SPEED_OF_SOUND),
             });
