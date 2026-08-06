@@ -21,6 +21,7 @@ import { Character } from "./character/character.js";
 import { SnowContact } from "./character/snowContact.js";
 import { SprayField } from "./vfx/particles.js";
 import { MuzzleMarkers } from "./vfx/muzzleMarkers.js";
+import { EyeBands } from "./vfx/eyeBands.js";
 import { SurfWake } from "./vfx/surfWake.js";
 import { SpellSystem } from "./spells/spellSystem.js";
 import { WalkerHerd } from "./walkers/walker.js";
@@ -273,6 +274,9 @@ async function boot() {
     // Tuning rings on the gun heads, live under the overlay's muzzle sliders.
     const muzzleMarkers = new MuzzleMarkers(gfx);
     muzzleMarkers.bindCamera(rig.camera.viewProjection);
+    // The walkers' red viewport bands — content, not tooling, so always on.
+    const eyeBands = new EyeBands(gfx);
+    eyeBands.bindCamera(rig.camera.viewProjection);
 
     // ------------------------------------------------------------ the speeder
     /** @type {Speeder|null} */
@@ -663,6 +667,10 @@ async function boot() {
             speeder?.collectMuzzles?.(muzzleMarkers);
         }
         muzzleMarkers.commit(rig.camera.position);
+        // The walkers' eyes, after the herd has settled this frame's heads.
+        eyeBands.begin();
+        walkers.collectEyes(eyeBands);
+        eyeBands.commit(rig.camera.position);
         // Before the spray: the wake decides where its own lip is, and the
         // grains it sheds have to be in the pool before the pool is uploaded.
         wake.update(dt, rig.camera.position);

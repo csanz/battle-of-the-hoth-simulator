@@ -215,6 +215,9 @@ const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _foot = new THREE.Vector2();
 const _tmp = new THREE.Vector3();
+const _tmp2 = new THREE.Vector3();
+/** Scratch for the eye band's local endpoints, head-local metres. */
+const _eyeLocal = new Float32Array(3);
 /** Scratch for the overlay-offset muzzle point, head-local metres. */
 const _muzzleLocal = new Float32Array(3);
 const _identity = new THREE.Matrix4();
@@ -403,6 +406,54 @@ function deriveHead(asset, header) {
 
     // The chin guns: either side of the nose, low on the face. Slightly proud of
     // it, so a bolt starts in front of the plating rather than inside it.
+    // The face surface at viewport height, measured from the geometry rather
+    // than guessed: `noseZ` is a bone *centroid* and sits well inside the
+    // head, and a glow band must stand just proud of the actual plating or
+    // the depth test eats it. One boot-time pass over the head's vertices,
+    // posed by their dominant bone exactly as the centroids were.
+    const eyeLo = headBottom + (headTop - headBottom) * 0.44;
+    const eyeHi = headBottom + (headTop - headBottom) * 0.70;
+    let faceZ = noseZ;
+    for (let v = 0; v < n; v++) {
+        let best = 0, bw = -1;
+        for (let k = 0; k < 4; k++) {
+            const w2 = wt[v * 4 + k];
+            if (w2 > bw) { bw = w2; best = idx[v * 4 + k]; }
+        }
+        if (!flags[best]) continue;
+        const o = best * 12;
+        const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+        const py = (anim[o + 1] * x + anim[o + 4] * y + anim[o + 7] * z) * bs
+            + anim[o + 10] * ts;
+        if (py < eyeLo || py > eyeHi) continue;
+        const pz = (anim[o + 2] * x + anim[o + 5] * y + anim[o + 8] * z) * bs
+            + anim[o + 11] * ts;
+        if (pz > faceZ) faceZ = pz;
+    }
+    // And the slit's width: how far the plating reaches sideways near that
+    // front, so the band spans the face it is lighting.
+    let faceHalfW = 0;
+    for (let v = 0; v < n; v++) {
+        let best = 0, bw = -1;
+        for (let k = 0; k < 4; k++) {
+            const w2 = wt[v * 4 + k];
+            if (w2 > bw) { bw = w2; best = idx[v * 4 + k]; }
+        }
+        if (!flags[best]) continue;
+        const o = best * 12;
+        const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+        const py = (anim[o + 1] * x + anim[o + 4] * y + anim[o + 7] * z) * bs
+            + anim[o + 10] * ts;
+        if (py < eyeLo || py > eyeHi) continue;
+        const pz = (anim[o + 2] * x + anim[o + 5] * y + anim[o + 8] * z) * bs
+            + anim[o + 11] * ts;
+        if (pz < faceZ - 0.7) continue;
+        const px = (anim[o] * x + anim[o + 3] * y + anim[o + 6] * z) * bs
+            + anim[o + 9] * ts;
+        const ax = Math.abs(px);
+        if (ax > faceHalfW) faceHalfW = ax;
+    }
+
     const chinY = headBottom + (headTop - headBottom) * 0.18;
     const noseOut = noseZ + 1.2;
     return {
@@ -419,6 +470,14 @@ function deriveHead(asset, header) {
         // A point straight out of the face, used to derive the firing direction
         // through whatever rotation the head currently has.
         aim: new Float32Array([0, chinY, noseOut + 40]),
+        // The viewport slit: upper-mid face, just proud of the measured
+        // plating, spanning most of the measured width. Ends, not centre, so
+        // the band renderer sees the head's own tilt in the segment.
+        eye: {
+            y: (eyeLo + eyeHi) * 0.5,
+            z: faceZ + 0.3,
+            halfSpan: Math.min(1.3, Math.max(0.7, faceHalfW * 0.72)),
+        },
         poseBone,
     };
 }
@@ -1172,6 +1231,8 @@ export class WalkerHerd {
         this.headHeight = head.height;
         this.muzzles = head.muzzles;
         this.muzzleAim = head.aim;
+        /** The viewport slit the red eye band lights, or null. */
+        this.eyeLocal = head.eye ?? null;
 
         // The level gate's calibration: the hull bone's forward-axis pitch,
         // scanned over the whole cycle. Firing is allowed in the top part of
@@ -1515,6 +1576,27 @@ export class WalkerHerd {
                 w._muzzleWorld(_muzzleLocal, _tmp);
                 markers.add(_tmp.x, _tmp.y, _tmp.z, 0.35 * s, bolt.r, bolt.g, bolt.b);
             }
+        }
+    }
+
+    /**
+     * The red viewport bands, one per machine, pushed onto the eye-band
+     * renderer as world segments — through the head's own rotation via the
+     * same transform the muzzles use, so the eyes track the look.
+     * @param {import("../vfx/eyeBands.js").EyeBands} bands
+     */
+    collectEyes(bands) {
+        const e = this.eyeLocal;
+        if (!e || !this._visible) return;
+        for (let i = 0; i < Math.min(this.count, this.walkers.length); i++) {
+            const w = this.walkers[i];
+            _eyeLocal[0] = -e.halfSpan;
+            _eyeLocal[1] = e.y;
+            _eyeLocal[2] = e.z;
+            w._muzzleWorld(_eyeLocal, _tmp);
+            _eyeLocal[0] = e.halfSpan;
+            w._muzzleWorld(_eyeLocal, _tmp2);
+            bands.add(_tmp.x, _tmp.y, _tmp.z, _tmp2.x, _tmp2.y, _tmp2.z);
         }
     }
 
