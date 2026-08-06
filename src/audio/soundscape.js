@@ -362,11 +362,13 @@ export class Soundscape {
         // ---------------------------------------------------------- the guns
         if (this.speeder && this.speeder.shotCount !== this._speederShots) {
             this._speederShots = this.speeder.shotCount;
-            // Alternating rather than random: the two barrels alternate, so the
-            // sounds should too, and a random pick would double a sample often
-            // enough to read as a stutter at this rate of fire.
-            this._laser ^= 1;
-            this.audio.play(this._laser ? "speederLaser1" : "speederLaser2", {
+            // A fixed cycle rather than random — random doubles a sample often
+            // enough to read as a stutter at this rate of fire. Weighted three
+            // to one toward the first laser: that recording is the cannon's
+            // voice, and the second is the variation that stops a held trigger
+            // sounding like a loop.
+            this._laser = (this._laser + 1) % 4;
+            this.audio.play(this._laser === 3 ? "speederLaser2" : "speederLaser1", {
                 rate: 0.96 + Math.random() * 0.08,
             });
         }
