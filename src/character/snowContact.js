@@ -230,7 +230,18 @@ export class SnowContact {
         // weight on its edge: downwash disturbs the surface, it does not
         // carve it. Less than half the board's bite, or a low pass leaves a
         // scar that reads as ploughing rather than flying.
-        const craft = S.speeder !== false ? 0.4 : 1;
+        let craft = 1;
+        if (S.speeder !== false) {
+            craft = 0.4;
+            // And it is gated on the *actual* daylight under the hull, not on
+            // the climb state — a craft crossing a gully at deck trim is still
+            // metres above the snow at the bottom of it, and downwash that
+            // reaches down a cliff face reads as a glitch. Full effect skimming
+            // at hover height, gone entirely past ~6.5 m of clearance.
+            const clear = ch.position.y - ch.groundY;
+            const low = 1 - Math.min(1, Math.max(0, (clear - 3.2) / 3.3));
+            craft *= low * low;
+        }
         const k = Math.min(moved, 0.6) * s * speedK * near * near * craft;
         if (k <= 0.001) return;
 
