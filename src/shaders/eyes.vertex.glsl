@@ -14,6 +14,7 @@ uniform vec3 cameraPos;
 uniform sampler2D eyeTex;
 
 out vec2 vUV;
+out float vFade;
 
 void main() {
     int id = int(position.x + 0.5);
@@ -32,13 +33,15 @@ void main() {
     float ul = length(up);
     up = ul > 1e-5 ? up / ul : vec3(0.0, 1.0, 0.0);
 
-    // A touch of growth with distance, so the band still reads as a lit slit
-    // on a machine four hundred metres out without ballooning up close.
-    float grow = 1.0 + sqrt(d2) * 0.006;
+    // True size, and a fade with range: the originals' viewports are dim —
+    // a detail you earn by closing on the machine, not a beacon. By 300 m
+    // the band has dissolved into the haze with the rest of the head.
+    float dist = sqrt(d2);
+    vFade = 1.0 - smoothstep(110.0, 300.0, dist);
 
     vec3 world = a.xyz
-        + b.xyz * (position.y * a.w * grow)
-        + up * (position.z * b.w * grow);
+        + b.xyz * (position.y * a.w)
+        + up * (position.z * b.w);
     vUV = position.yz;
 
     vec4 clip = viewProjection * vec4(world, 1.0);

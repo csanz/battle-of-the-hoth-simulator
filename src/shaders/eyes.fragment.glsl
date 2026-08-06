@@ -7,6 +7,7 @@ precision highp float;
 precision highp int;
 
 in vec2 vUV;
+in float vFade;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -18,7 +19,8 @@ void main() {
     // The core: a hotter line down the middle, so it reads as glass over
     // light rather than red paint.
     float core = (1.0 - smoothstep(0.70, 0.95, u)) * (1.0 - smoothstep(0.0, 0.45, v));
-    vec3 col = vec3(1.0, 0.13, 0.05) * (bar * 0.85 + core * 1.5);
-    // HDR push so the band survives the tonemap the way the bolts do.
-    fragColor = vec4(col * 2.2, 1.0);
+    vec3 col = vec3(1.0, 0.13, 0.05) * (bar * 0.55 + core * 0.9);
+    // Dim on purpose — the film's viewports are barely-lit glass, not lamps —
+    // and gone with range (vFade), so the eyes are a reward for getting close.
+    fragColor = vec4(col * 0.85 * vFade, 1.0);
 }
