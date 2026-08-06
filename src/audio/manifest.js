@@ -120,7 +120,7 @@ export const AUDIO_MANIFEST = {
 
     // The opening line: Luke, once, as the boot screen fades. Fired from main
     // right after the unlock gesture, so it is the first thing heard.
-    lukeIntro: { url: "audio/luke-voice-1.mp3", bus: "voice", gain: 1.0 },
+    lukeIntro: { url: "audio/luke-voice-1.mp3", bus: "voice", gain: 0.5 },
 
     // Catching air off a crest at speed. Six takes, drawn from a shuffled bag so
     // the order is random but no line comes back before the other five have had a
