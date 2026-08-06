@@ -448,7 +448,11 @@ const allFrames = frames.slice();
 for (let ci = 1; ci < clips.length; ci++) {
     const c = clips[ci];
     for (let f = 0; f < c.frameCount; f++) {
-        allFrames.push(solveFrame(c.channels, (f / c.frameCount) * c.duration));
+        // Inclusive of the end, unlike the loop above: clip 0 wraps and its
+        // last frame blends back into its first, but these are one-shots that
+        // *hold* their final frame — a death that never quite reaches its
+        // settled pose keeps a corpse hovering a frame off the snow.
+        allFrames.push(solveFrame(c.channels, (f / (c.frameCount - 1)) * c.duration));
     }
 }
 const totalFrames = allFrames.length;

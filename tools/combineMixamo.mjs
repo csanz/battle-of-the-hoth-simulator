@@ -1,9 +1,14 @@
 /**
  * Combine Mixamo FBX downloads into a single GLB with every animation clip.
  *
- *   node tools/combineMixamo.mjs [--textures=orig.glb] <out.glb> <base.fbx> [anim1.fbx ...]
+ *   node tools/combineMixamo.mjs [--textures=orig.glb] <out.glb> <base.fbx|base.glb> [anim1.fbx ...]
  *
  * e.g. node tools/combineMixamo.mjs snowtrooper.glb Idle.fbx Walking.fbx Firing.fbx
+ *
+ * The base may also be a GLB this tool produced earlier — its mesh, skeleton,
+ * materials *and existing clips* all carry through, so growing a model's clip
+ * library is one command against the previous version rather than a rebuild
+ * from the original FBX stack.
  *
  * `--textures=` points at the pre-Mixamo GLB of the same model. Mixamo strips
  * texture images from its FBX downloads but keeps the material names, so each
@@ -101,15 +106,22 @@ async function fbxToGLB(fbx, i) {
 
 try {
     console.log(`base: ${basename(baseArg.path)}`);
-    const base = await fbxToGLB(baseArg.path, "base");
+    const baseIsGLB = /\.glb$/i.test(baseArg.path);
+    const base = baseIsGLB
+        ? parseGLB(resolve(baseArg.path))
+        : await fbxToGLB(baseArg.path, "base");
     const baseNodeByName = new Map(
         base.json.nodes.map((n, i) => [n.name, i])
     );
     base.json.animations = base.json.animations ?? [];
     // The base's own clip (if it was downloaded with an animation) keeps a
-    // useful name too, instead of Mixamo's default "mixamo.com".
-    const clipName = ({ path, clip }) => clip ?? basename(path).replace(/\.fbx$/i, "");
-    for (const a of base.json.animations) a.name = clipName(baseArg);
+    // useful name too, instead of Mixamo's default "mixamo.com". A GLB base's
+    // clips were named when they were combined — renaming them all after the
+    // base file would flatten "Walking"/"Idle"/... into one name.
+    const clipName = ({ path, clip }) => clip ?? basename(path).replace(/\.(fbx|glb)$/i, "");
+    if (!baseIsGLB) {
+        for (const a of base.json.animations) a.name = clipName(baseArg);
+    }
 
     let bin = Buffer.from(base.bin);
     const binParts = [bin];

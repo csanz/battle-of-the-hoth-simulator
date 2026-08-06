@@ -52,23 +52,26 @@ import { S } from "../core/settings.js";
 import { expDamp } from "../core/camera.js";
 import { Speeder } from "./speeder.js";
 
-/** Hard physical limits, matched to the player's craft so it reads as one. */
-const TURN_MAX = 2.1;        // rad/s ceiling, reached only at low speed
-/** Lateral-acceleration budget, m/s^2 — the real cap at speed (R7). */
-const LAT_ACCEL = 38;
-const ACCEL = 13;            // m/s^2 toward the phase's target speed
-const SPEED_ATTACK = 29;
-const SPEED_BREAK = 36;
-const SPEED_REPO = 23;
+/** Hard physical limits. Hotter than the player's craft on purpose: this is
+ *  the ace of the pair, and an escort that dawdles reads as broken AI. */
+const TURN_MAX = 2.6;        // rad/s ceiling, reached only at low speed
+/** Lateral-acceleration budget, m/s^2 — the real cap at speed (R7). High:
+ *  the craft snaps around its turns and comes straight back at the herd. */
+const LAT_ACCEL = 75;
+const ACCEL = 22;            // m/s^2 toward the phase's target speed
+const SPEED_ATTACK = 38;
+const SPEED_BREAK = 46;
+const SPEED_REPO = 32;
 
-/** The run geometry, metres. */
-const RUN_START = 470;       // how far out a pass begins
-const FIRE_FAR = 340;        // guns open
-const BREAK_AT = 125;        // where the pull-off begins
+/** The run geometry, metres. Tight — the fight stays around the walkers
+ *  rather than wandering off over the horizon between passes. */
+const RUN_START = 280;       // how far out a pass begins
+const FIRE_FAR = 260;        // guns open
+const BREAK_AT = 110;        // where the pull-off begins
 /** Guns stop where the break begins — one constant, so neither can silently
  *  dead-code the other (R8). The burst runs right into the pull-off. */
 const FIRE_NEAR = BREAK_AT;
-const BREAK_TIME = 2.3;      // seconds of hard egress before swinging wide
+const BREAK_TIME = 1.6;      // seconds of hard egress before swinging wide
 
 /** Seconds the carrot blends across a phase hand-off (R5). */
 const CARROT_BLEND = 0.4;
@@ -79,8 +82,9 @@ const ORBIT_AHEAD = 0.55;
 
 /** How often a pass goes after the infantry rather than the armour. */
 const TROOPER_PASS_CHANCE = 0.65;
-/** Run altitude against troopers, metres — man-height strafing, not hull. */
-const TROOPER_RUN_ALT = 2.4;
+/** Run altitude against troopers, metres — low strafing, but high enough
+ *  that the smoothed path never has the hull kissing a dune crest. */
+const TROOPER_RUN_ALT = 3.5;
 
 const _toT = new THREE.Vector3();
 
@@ -292,16 +296,18 @@ class SimPilot {
             wantX = this.anchor.x + Math.sin(b + ORBIT_AHEAD) * ORBIT_R;
             wantZ = this.anchor.z + Math.cos(b + ORBIT_AHEAD) * ORBIT_R;
             this._speedTarget = SPEED_REPO;
-            this._climbWant = 4;
+            this._climbWant = 12;
         } else if (this._phase === "reposition") {
             wantX = this._runPoint.x;
             wantZ = this._runPoint.z;
             this._speedTarget = SPEED_REPO;
-            this._climbWant = 3;
+            // High between passes: the swing-around is flown up out of the
+            // dunes, and the attack is a *descent* onto the line.
+            this._climbWant = 12;
             const dRun = Math.hypot(
                 this._runPoint.x - this.position.x, this._runPoint.z - this.position.z
             );
-            if (dRun < 70 || this._phaseT > 11) {
+            if (dRun < 60 || this._phaseT > 7) {
                 this._phase = "approach";
                 this._phaseT = 0;
                 // Soften the run-point -> target hand-off; the break keeps
@@ -319,7 +325,7 @@ class SimPilot {
             const err = Math.abs(wrapAngle(
                 Math.atan2(tx - this.position.x, tz - this.position.z) - this.facing
             ));
-            if ((err < 0.22 && distT < RUN_START + 60) || this._phaseT > 9) {
+            if ((err < 0.22 && distT < RUN_START + 60) || this._phaseT > 6) {
                 this._phase = "attack";
                 this._phaseT = 0;
             }
@@ -394,15 +400,29 @@ class SimPilot {
 
         // ---- speed along the nose ------------------------------------------
         const want = this._speedTarget;
-        const next = speedNow + Math.max(-ACCEL * dt, Math.min(ACCEL * dt, want - speedNow));
         const fx = Math.sin(this.facing), fz = Math.cos(this.facing);
         const prevVx = this.velocity.x, prevVz = this.velocity.z;
         // Mostly on rails with a touch of drift: velocity chases the nose fast
         // but not instantly, which is where the visible slip in a hard bank
-        // comes from.
+        // comes from. The chase aims at the phase's *full* want-speed — aiming
+        // it one ACCEL*dt step ahead instead was the old hidden handbrake:
+        // the ease only ever took a seventh of a one-frame increment, so the
+        // craft accelerated at ~2 m/s^2 whatever ACCEL said.
         const grip = 1 - Math.exp(-9 * dt);
-        this.velocity.x += (fx * next - this.velocity.x) * grip;
-        this.velocity.z += (fz * next - this.velocity.z) * grip;
+        this.velocity.x += (fx * want - this.velocity.x) * grip;
+        this.velocity.z += (fz * want - this.velocity.z) * grip;
+        // The throttle's authority over the magnitude: speed builds at ACCEL
+        // and sheds half again faster, whatever the directional ease just did.
+        const sAfter = Math.hypot(this.velocity.x, this.velocity.z);
+        const sClamped = Math.max(
+            speedNow - ACCEL * 1.5 * dt,
+            Math.min(speedNow + ACCEL * dt, sAfter)
+        );
+        if (sAfter > 1e-4 && sClamped !== sAfter) {
+            const k = sClamped / sAfter;
+            this.velocity.x *= k;
+            this.velocity.z *= k;
+        }
         this.position.x += this.velocity.x * dt;
         this.position.z += this.velocity.z * dt;
 
@@ -424,10 +444,12 @@ class SimPilot {
         this.groundY = this.terrain && this.terrain.heightAt
             ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
         if (!Number.isFinite(this._cruiseGround)) this._cruiseGround = this.groundY;
-        this._cruiseGround = expDamp(this._cruiseGround, this.groundY, 0.5, dt);
-        const committed = this._phase === "approach"
-            || this._phase === "attack" || this._phase === "break";
-        this._lift = expDamp(this._lift, committed ? 1 : 0.45, 1.6, dt);
+        this._cruiseGround = expDamp(this._cruiseGround, this.groundY, 0.4, dt);
+        // Always fully flown: the AI never traces the deck the way the player
+        // can choose to, so the hull rides the levelled line in every phase —
+        // the up-and-down of the dune field belongs to the player's low
+        // flying, not to an escort holding formation at altitude.
+        this._lift = expDamp(this._lift, 1, 1.6, dt);
         this.lift01 = this._lift;
         const base = this.groundY + (this._cruiseGround - this.groundY) * this._lift;
         this.pathY = base;

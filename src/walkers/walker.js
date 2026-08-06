@@ -675,6 +675,9 @@ class Walker {
             if (this._oneshotT >= c.duration) {
                 if (!c.hold) {
                     this.oneshot = null;
+                    // The chain: a dive flows into its get-up, a get-up back
+                    // into the walk (by chaining into nothing).
+                    if (c.then) this._play(c.then.name, c.then);
                 } else if (this._oneshotT >= c.duration + c.linger) {
                     this.oneshot = null;
                     this.herd.place(this, target);
@@ -722,28 +725,46 @@ class Walker {
     }
 
     /**
-     * Play a baked one-shot clip — a hit reaction, a death — in place of the
-     * cycle. Needs a bake that carried extra clips (`header.clips`); on any
-     * other model this is a silent no-op, so callers never have to check.
+     * Play a baked one-shot clip — a hit reaction, a dive, a death — in place
+     * of the cycle. Needs a bake that carried extra clips (`header.clips`);
+     * on any other model this is a silent no-op, so callers never check.
      *
-     * @param {string} name clip name as baked, e.g. "Hit Reaction"
-     * @param {{hold?: boolean, linger?: number}} [opts] `hold` freezes the
-     *   final frame instead of returning to the walk (a death); `linger` is
-     *   how long the body stays before the machine is recycled.
+     * Interruption rules: the dead don't flinch (a holding clip is final),
+     * and a reaction already in progress yields only to a death — a trooper
+     * mid-dive re-diving off a second near miss is a glitch, but a bolt
+     * landing on him mid-dive is a kill.
+     *
+     * @param {string} name clip name as baked, e.g. "jumpLeft"
+     * @param {{
+     *   hold?: boolean, linger?: number, startAt?: number,
+     *   then?: {name: string, hold?: boolean, linger?: number,
+     *           startAt?: number, then?: object},
+     * }} [opts] `hold` freezes the final frame instead of returning to the
+     *   walk (a death); `linger` is how long the body stays before the
+     *   machine is recycled; `startAt` skips into the clip (a get-up whose
+     *   first act is lying still); `then` chains another clip on completion —
+     *   the dive that flows into getting up.
      */
     react(name, opts = {}) {
+        const cur = this.oneshot;
+        if (cur && (cur.hold || !opts.hold)) return;
+        this._play(name, opts);
+    }
+
+    /** Unconditional clip start — `react`'s gate, and the chain's next link. */
+    _play(name, opts = {}) {
         const clips = this.herd.clips;
         const c = clips && clips[name];
-        // The dead don't flinch: a holding clip cannot be interrupted.
-        if (!c || (this.oneshot && this.oneshot.hold)) return;
+        if (!c) return;
         this.oneshot = {
             anim: c.anim,
             frameCount: c.frameCount,
             duration: c.duration,
             hold: !!opts.hold,
             linger: opts.linger ?? 0,
+            then: opts.then ?? null,
         };
-        this._oneshotT = 0;
+        this._oneshotT = opts.startAt ?? 0;
     }
 
     /**
