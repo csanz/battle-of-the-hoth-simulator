@@ -62,6 +62,9 @@ export function applyOpening(shot, rig, character, herd, terrain) {
         character.position.x = shot.player.x;
         character.position.z = shot.player.z;
         character.position.y = terrain.heightAt(shot.player.x, shot.player.z);
+        // The craft's heading, not just its parking spot — a speeder start
+        // aimed at nothing is half a shot.
+        if (shot.player.facing !== undefined) character.facing = shot.player.facing;
     }
 
     const list = shot.walkers || [];
@@ -104,7 +107,8 @@ export function captureOpening(rig, character, herd) {
         "export const OPENING = {",
         `    camera: { yaw: ${n(rig.yaw)}, pitch: ${n(rig.pitch)}, ` +
             `distance: ${n(rig.distanceTarget)} },`,
-        `    player: { x: ${n(character.position.x)}, z: ${n(character.position.z)} },`,
+        `    player: { x: ${n(character.position.x)}, z: ${n(character.position.z)}, ` +
+            `facing: ${n(character.facing)} },`,
         "    walkers: [",
         ...walkers.map(
             (w) => `        { x: ${w.x}, z: ${w.z}, yaw: ${w.yaw}, phase: ${w.phase} },`

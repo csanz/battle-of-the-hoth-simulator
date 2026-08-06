@@ -159,6 +159,8 @@ export class Overlay {
         // the pose line below needs, in the units the rig actually stores.
         this.rig = refs?.rig ?? null;
         this.character = refs?.character ?? null;
+        /** Named callbacks for `t: "a"` action rows in the SCHEMA. */
+        this.actions = refs?.actions ?? {};
 
         const ch = document.createElement("h2");
         ch.textContent = "Camera";
@@ -318,6 +320,28 @@ export class Overlay {
                 };
                 row.appendChild(c);
                 this.widgets.push({ k: it.kr, sync: () => (c.value = toHex()) });
+            } else if (it.t === "a") {
+                // An action row: a button wired to a named callback the owner
+                // passed in — the panel stays declarative, the work stays in
+                // main. Flashes its label briefly so a copy has feedback.
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.textContent = it.bl || "run";
+                btn.style.cssText =
+                    "font:inherit;font-size:9px;letter-spacing:0.14em;" +
+                    "text-transform:uppercase;color:inherit;cursor:pointer;" +
+                    "background:rgba(143,196,232,0.08);" +
+                    "border:1px solid rgba(143,196,232,0.28);" +
+                    "border-radius:2px;padding:4px 12px;";
+                btn.onclick = () => {
+                    const fn = this.actions[it.k];
+                    if (!fn) return;
+                    fn();
+                    const old = btn.textContent;
+                    btn.textContent = it.done || "done";
+                    setTimeout(() => (btn.textContent = old), 900);
+                };
+                row.appendChild(btn);
             } else if (it.t === "e") {
                 const sel = document.createElement("select");
                 for (let o = 0; o < it.opts.length; o++) {

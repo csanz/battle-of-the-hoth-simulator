@@ -66,6 +66,18 @@ export class Destroyers {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        // Bounds from the bake's own header — nothing downstream should ever
+        // need to walk 23k vertices to learn them (and culling is off anyway;
+        // placement lives in the `model` uniform, invisible to Three).
+        const lo2 = new THREE.Vector3(
+            dv.getFloat32(16, true), dv.getFloat32(20, true), dv.getFloat32(24, true)
+        );
+        const hi2 = new THREE.Vector3(
+            dv.getFloat32(28, true), dv.getFloat32(32, true), dv.getFloat32(36, true)
+        );
+        const center = lo2.clone().add(hi2).multiplyScalar(0.5);
+        geometry.boundingSphere = new THREE.Sphere(center, hi2.distanceTo(lo2) * 0.5);
+        geometry.boundingBox = new THREE.Box3(lo2, hi2);
 
         for (let i = 0; i < COUNT; i++) {
             const model = new THREE.Matrix4();
@@ -75,7 +87,11 @@ export class Destroyers {
                 fragment: getShader("destroyerPixelShader"),
                 uniforms: {
                     model: { value: model },
-                    viewProjection: { value: new THREE.Matrix4() },
+                    // The camera may have been bound before this async load
+                    // finished — without honouring it here every ship draws
+                    // with an identity view-projection: clip-space garbage,
+                    // a fleet that exists and is never seen.
+                    viewProjection: { value: this._boundVP || new THREE.Matrix4() },
                     cameraPos: { value: this._cameraPos },
                     sunDir: { value: this.sky.sunDir },
                     sunColor: { value: this.sky.sunRadiance },

@@ -262,7 +262,12 @@ async function boot() {
         post.render(gfx);
     };
 
-    const overlay = new Overlay({ rig, character });
+    // F2 snapshots the camera, the player and the herd as a paste-able block —
+    // wired before the overlay so its "Start location · copy" button can share
+    // the exact same capture. See `core/openingShot.js` for what to do with it.
+    const captureShot = installShotCapture(rig, character, walkers);
+
+    const overlay = new Overlay({ rig, character, actions: { captureShot } });
     const toggleOverlay = () => overlay.toggle();
     // The same two numbers the overlay carries, on their own, for when the panel
     // would cover the thing being measured.
@@ -275,9 +280,6 @@ async function boot() {
     // a touchscreen never sees it. Everything it produces goes into the same
     // `input` struct the keyboard writes.
     const touchControls = createTouchControls({ onToggleOverlay: toggleOverlay });
-    // F2 snapshots the camera, the player and the herd as a paste-able block.
-    // See `core/openingShot.js` for what to do with it.
-    const captureShot = installShotCapture(rig, character, walkers);
 
     // The soundscape reads game state; nothing in the game knows it exists. It
     // stays silent until `start()`, which only happens on the gesture that

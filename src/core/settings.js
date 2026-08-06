@@ -707,6 +707,7 @@ export const SCHEMA = [
     {
         group: "Systems",
         items: [
+            { k: "captureShot", l: "Start location", t: "a", bl: "copy", done: "copied" },
             { k: "showTerrain", l: "Terrain", t: "b" },
             { k: "showCharacter", l: "Character", t: "b" },
             { k: "wireframe", l: "Wireframe", t: "b" },
