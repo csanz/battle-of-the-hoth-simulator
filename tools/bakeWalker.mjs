@@ -130,23 +130,95 @@ const slots = [];
 const indices = [];
 let vertBase = 0;
 
-for (const node of json.nodes) {
-    if (node.mesh === undefined || node.skin === undefined) continue;
-    const map = skinMaps[node.skin];
+// Parent map, for rigid attachments (below).
+const parentOf = new Array(json.nodes.length).fill(-1);
+json.nodes.forEach((n, i) => (n.children ?? []).forEach((c) => { parentOf[c] = i; }));
+
+function localMatrix(node) {
+    return node.matrix ?? composeTRS(
+        node.translation ?? [0, 0, 0],
+        node.rotation ?? [0, 0, 0, 1],
+        node.scale ?? [1, 1, 1]
+    );
+}
+/** Affine mat4 inverse (column-major). Enough for IBMs, which are affine. */
+function invAffine(m) {
+    const [a, b, c, , d, e, f, , g, h, i2] = [
+        m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10],
+    ];
+    const det = a * (e * i2 - f * h) - d * (b * i2 - c * h) + g * (b * f - c * e);
+    const s = 1 / det;
+    const r = [
+        (e * i2 - f * h) * s, (c * h - b * i2) * s, (b * f - c * e) * s, 0,
+        (f * g - d * i2) * s, (a * i2 - c * g) * s, (c * d - a * f) * s, 0,
+        (d * h - e * g) * s, (b * g - a * h) * s, (a * e - b * d) * s, 0,
+        0, 0, 0, 1,
+    ];
+    r[12] = -(r[0] * m[12] + r[4] * m[13] + r[8] * m[14]);
+    r[13] = -(r[1] * m[12] + r[5] * m[13] + r[9] * m[14]);
+    r[14] = -(r[2] * m[12] + r[6] * m[13] + r[10] * m[14]);
+    return r;
+}
+
+for (const [nodeIdx, node] of json.nodes.entries()) {
+    if (node.mesh === undefined) continue;
+    let map = node.skin !== undefined ? skinMaps[node.skin] : null;
+
+    // A mesh with no skin — a prop parented under a joint (a rifle in a hand).
+    // Rigid-skin it: 100% weight on that joint, with the vertices carried
+    // through the attachment chain and the joint's bind matrix into the same
+    // bind space the skinned geometry lives in, so one skinning path draws it.
+    let rigid = null;
+    if (!map) {
+        let anc = nodeIdx, chain = localMatrix(node);
+        while (parentOf[anc] >= 0 && !boneOfJoint.has(anc)) {
+            anc = parentOf[anc];
+            if (!boneOfJoint.has(anc)) chain = mul4(localMatrix(json.nodes[anc]), chain);
+        }
+        if (!boneOfJoint.has(anc)) {
+            console.warn(`skipping unskinned mesh "${node.name}" — no joint ancestor`);
+            continue;
+        }
+        const bone = boneOfJoint.get(anc);
+        rigid = { bone, toBind: mul4(invAffine(Array.from(ibms[bone])), chain) };
+    }
+
     for (const prim of json.meshes[node.mesh].primitives) {
+        const n = json.accessors[prim.attributes.POSITION].count;
         const pos = accessorFloat(prim.attributes.POSITION);
         const nrm = accessorFloat(prim.attributes.NORMAL);
-        const uv = accessorFloat(prim.attributes.TEXCOORD_0);
-        const jnt = accessorFloat(prim.attributes.JOINTS_0);
-        const wt = accessorFloat(prim.attributes.WEIGHTS_0);
-        const n = json.accessors[prim.attributes.POSITION].count;
+        // A material that samples no textures may have had its UVs pruned.
+        const uv = prim.attributes.TEXCOORD_0 !== undefined
+            ? accessorFloat(prim.attributes.TEXCOORD_0)
+            : new Float32Array(n * 2);
+        const jnt = rigid ? null : accessorFloat(prim.attributes.JOINTS_0);
+        const wt = rigid ? null : accessorFloat(prim.attributes.WEIGHTS_0);
         for (let i = 0; i < n; i++) {
-            positions.push(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-            normals.push(nrm[i * 3], nrm[i * 3 + 1], nrm[i * 3 + 2]);
+            let px = pos[i * 3], py = pos[i * 3 + 1], pz = pos[i * 3 + 2];
+            let nx = nrm[i * 3], ny = nrm[i * 3 + 1], nz = nrm[i * 3 + 2];
+            if (rigid) {
+                const m = rigid.toBind;
+                const tx = m[0] * px + m[4] * py + m[8] * pz + m[12];
+                const ty = m[1] * px + m[5] * py + m[9] * pz + m[13];
+                const tz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+                px = tx; py = ty; pz = tz;
+                const rx = m[0] * nx + m[4] * ny + m[8] * nz;
+                const ry = m[1] * nx + m[5] * ny + m[9] * nz;
+                const rz = m[2] * nx + m[6] * ny + m[10] * nz;
+                const l = Math.hypot(rx, ry, rz) || 1;
+                nx = rx / l; ny = ry / l; nz = rz / l;
+            }
+            positions.push(px, py, pz);
+            normals.push(nx, ny, nz);
             uvs.push(uv[i * 2], uv[i * 2 + 1]);
             for (let k = 0; k < 4; k++) {
-                boneIdx.push(map[jnt[i * 4 + k] | 0]);
-                boneWt.push(wt[i * 4 + k]);
+                if (rigid) {
+                    boneIdx.push(k === 0 ? rigid.bone : 0);
+                    boneWt.push(k === 0 ? 1 : 0);
+                } else {
+                    boneIdx.push(map[jnt[i * 4 + k] | 0]);
+                    boneWt.push(wt[i * 4 + k]);
+                }
             }
             slots.push(prim.material ?? 0);
         }
@@ -160,17 +232,30 @@ const triangleCount = indices.length / 3;
 console.log(`geometry: ${vertexCount} verts, ${triangleCount} tris, ${boneCount} bones`);
 
 // -------------------------------------------------------- animation sampling
-const anim0 = json.animations?.[0];
-if (!anim0) throw new Error("no animation to bake");
-const channels = anim0.channels.map((ch) => ({
-    node: ch.target.node,
-    path: ch.target.path,
-    input: accessorFloat(anim0.samplers[ch.sampler].input),
-    output: accessorFloat(anim0.samplers[ch.sampler].output),
-}));
-const duration = Math.max(...channels.map((c) => c.input[c.input.length - 1]));
-const frameCount = Math.max(2, Math.round(duration * FPS));
-console.log(`clip: ${duration.toFixed(3)}s -> ${frameCount} frames @ ${FPS}fps`);
+// Every clip in the file is baked. The first is the locomotion cycle the
+// runtime loops, and it alone decides orientation, grounding and speed; the
+// rest (hit reactions, deaths) ride along in the same table, indexed by
+// `header.clips`. A single-clip model bakes byte-identically to before.
+if (!json.animations?.length) throw new Error("no animation to bake");
+const clips = json.animations.map((a, i) => {
+    const chs = a.channels.map((ch) => ({
+        node: ch.target.node,
+        path: ch.target.path,
+        input: accessorFloat(a.samplers[ch.sampler].input),
+        output: accessorFloat(a.samplers[ch.sampler].output),
+    }));
+    const dur = Math.max(...chs.map((c) => c.input[c.input.length - 1]));
+    return {
+        name: a.name ?? `clip${i}`,
+        channels: chs,
+        duration: dur,
+        frameCount: Math.max(2, Math.round(dur * FPS)),
+    };
+});
+const { channels, duration, frameCount } = clips[0];
+for (const c of clips) {
+    console.log(`clip "${c.name}": ${c.duration.toFixed(3)}s -> ${c.frameCount} frames @ ${FPS}fps`);
+}
 
 function sampleChannel(ch, time, n) {
     const input = ch.input;
@@ -210,14 +295,14 @@ function mul4(a, b) {
 }
 
 /** All bones' skinning affines (world * IBM) at `time`, glTF space, mat4[]. */
-function solveFrame(time) {
+function solveFrame(chs, time) {
     const local = json.nodes.map((n) => ({
         t: n.translation ? [...n.translation] : [0, 0, 0],
         q: n.rotation ? [...n.rotation] : [0, 0, 0, 1],
         s: n.scale ? [...n.scale] : [1, 1, 1],
         m: n.matrix ?? null,
     }));
-    for (const ch of channels) {
+    for (const ch of chs) {
         const L = local[ch.node];
         if (ch.path === "translation") L.t = sampleChannel(ch, time, 3);
         else if (ch.path === "rotation") L.q = sampleChannel(ch, time, 4);
@@ -242,7 +327,7 @@ function solveFrame(time) {
 
 const frames = [];
 for (let f = 0; f < frameCount; f++) {
-    frames.push(solveFrame((f / frameCount) * duration));
+    frames.push(solveFrame(channels, (f / frameCount) * duration));
 }
 
 // ------------------------------------------------- orientation, scale, speed
@@ -254,6 +339,7 @@ function boneTrans(f, b) {
     return [m[12], m[13], m[14]];
 }
 const travel = [];
+let groundLo = Infinity;
 for (let b = 0; b < boneCount; b++) {
     let lo = Infinity, hi = -Infinity;
     for (let f = 0; f < frameCount; f++) {
@@ -262,13 +348,19 @@ for (let b = 0; b < boneCount; b++) {
         if (y > hi) hi = y;
     }
     travel.push({ bone: b, lo, range: hi - lo });
+    if (lo < groundLo) groundLo = lo;
 }
+// A foot is the thing that gets closest to the ground — proximity first, then
+// travel. Travel alone was enough for the mechs, but a humanoid's swinging
+// hands out-travel its feet, and a "foot" that is actually a hand aims the
+// whole bake down the arm-swing diagonal.
 const maxRange = Math.max(...travel.map((t) => t.range));
-const feet = travel
-    .filter((t) => t.range > maxRange * 0.55)
-    .sort((a, b) => a.lo - b.lo)
-    .slice(0, 4);
-console.log(`feet: bones [${feet.map((f) => f.bone)}], travel ${maxRange.toFixed(2)} glTF units`);
+const nearGround = travel.filter((t) => t.lo < groundLo + maxRange * 0.25);
+const feet = nearGround
+    .sort((a, b) => b.range - a.range)
+    .slice(0, 4)
+    .filter((t) => t.range > maxRange * 0.2);
+console.log(`feet: bones [${feet.map((f) => f.bone)}] of ${nearGround.length} near ground, max travel ${maxRange.toFixed(2)}`);
 
 let slide = [0, 0];
 let slideSpeed = 0;
@@ -350,11 +442,29 @@ console.log(`bounds x[${bounds.min[0].toFixed(1)},${bounds.max[0].toFixed(1)}] z
 // ----------------------------------------------- final matrices + quantise
 // Basis stays unit (rotation-only — verified below); scale is folded into the
 // bind positions and the translations instead, exactly as the shipped bins do.
-const animF = new Float32Array(frameCount * boneCount * 12);
+// Clip 0's frames are already solved; the rest are solved here and appended,
+// so the table is clip-major: all of clip 0's frames, then all of clip 1's...
+const allFrames = frames.slice();
+for (let ci = 1; ci < clips.length; ci++) {
+    const c = clips[ci];
+    for (let f = 0; f < c.frameCount; f++) {
+        allFrames.push(solveFrame(c.channels, (f / c.frameCount) * c.duration));
+    }
+}
+const totalFrames = allFrames.length;
+// Only bones that actually move vertices size the quantisation range. A
+// Mixamo rig lists helper nodes (the armature root, at scale 100) as joints;
+// letting one of those set `basisScale` costs the real bones 100x of their
+// precision for a matrix nothing ever reads.
+const usedBones = new Uint8Array(boneCount);
+for (let v = 0; v < vertexCount * 4; v++) {
+    if (boneWt[v] > 0) usedBones[boneIdx[v]] = 1;
+}
+const animF = new Float32Array(totalFrames * boneCount * 12);
 let maxBasis = 0, maxTrans = 0;
-for (let f = 0; f < frameCount; f++) {
+for (let f = 0; f < totalFrames; f++) {
     for (let b = 0; b < boneCount; b++) {
-        const m = frames[f][b];
+        const m = allFrames[f][b];
         const o = (f * boneCount + b) * 12;
         // three basis columns through the reorient (z-mirror included)
         for (let c = 0; c < 3; c++) {
@@ -364,20 +474,24 @@ for (let f = 0; f < frameCount; f++) {
             animF[o + c * 3] = col[0] * sgn;
             animF[o + c * 3 + 1] = col[1] * sgn;
             animF[o + c * 3 + 2] = col[2] * sgn;
-            maxBasis = Math.max(maxBasis, Math.abs(col[0]), Math.abs(col[1]), Math.abs(col[2]));
+            if (usedBones[b]) {
+                maxBasis = Math.max(maxBasis, Math.abs(col[0]), Math.abs(col[1]), Math.abs(col[2]));
+            }
         }
         const t = reorient3(m[12], m[13], m[14]);
         animF[o + 9] = t[0] * scale + recentre[0];
         animF[o + 10] = t[1] * scale + recentre[1];
         animF[o + 11] = t[2] * scale + recentre[2];
-        maxTrans = Math.max(
-            maxTrans, Math.abs(animF[o + 9]), Math.abs(animF[o + 10]), Math.abs(animF[o + 11])
-        );
+        if (usedBones[b]) {
+            maxTrans = Math.max(
+                maxTrans, Math.abs(animF[o + 9]), Math.abs(animF[o + 10]), Math.abs(animF[o + 11])
+            );
+        }
     }
 }
 const basisScale = maxBasis / 32767;
 const transScale = maxTrans / 32767;
-const animQ = new Int16Array(frameCount * boneCount * 12);
+const animQ = new Int16Array(totalFrames * boneCount * 12);
 for (let i = 0; i < animF.length; i++) {
     const s = i % 12 < 9 ? basisScale : transScale;
     animQ[i] = Math.max(-32768, Math.min(32767, Math.round(animF[i] / s)));
@@ -473,6 +587,18 @@ const header = {
     boneCount,
     frameCount,
     duration,
+    // Where each clip's frames live in the anim table. Absent (or length 1) on
+    // single-clip models — the loader treats the whole table as the cycle.
+    ...(clips.length > 1 && {
+        clips: (() => {
+            let f0 = 0;
+            return clips.map((c) => {
+                const e = { name: c.name, frame0: f0, frameCount: c.frameCount, duration: c.duration };
+                f0 += c.frameCount;
+                return e;
+            });
+        })(),
+    }),
     speed,
     height,
     bounds,

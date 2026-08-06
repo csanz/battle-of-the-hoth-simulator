@@ -53,15 +53,25 @@ function wrapAngle(a) {
     return a;
 }
 
+/** How often a pass goes after the infantry rather than the armour. */
+const TROOPER_PASS_CHANCE = 0.65;
+/** Run altitude against troopers, metres — man-height strafing, not hull. */
+const TROOPER_RUN_ALT = 2.4;
+
 class SimPilot {
     /**
      * @param {import("../terrain/terrain.js").Terrain} terrain
      * @param {import("../walkers/walker.js").WalkerHerd|null} walkers
      * @param {{x:number, z:number}} anchor the player, for the patrol fallback
+     * @param {import("../walkers/walker.js").WalkerHerd|null} [troopers]
+     *   the infantry the strafing runs mostly go after
      */
-    constructor(terrain, walkers, anchor) {
+    constructor(terrain, walkers, anchor, troopers) {
         this.terrain = terrain;
         this.walkers = walkers;
+        this.troopers = troopers ?? null;
+        /** Whether the current pass hunts infantry. Rolled per pass. */
+        this._hitTroopers = false;
         this.anchor = anchor;
 
         // ---- the controller surface Speeder reads -------------------------
@@ -92,16 +102,17 @@ class SimPilot {
         this._pickRunPoint();
     }
 
-    /** The walker being attacked this pass, or null when there is none. */
-    _target() {
-        const herd = this.walkers;
-        if (!herd || !herd.walkers || S.showWalker === false) return null;
+    /** Nearest live machine of one herd, or null. */
+    _nearestOf(herd, visible) {
+        if (!herd || !herd.walkers || !visible) return null;
         const n = Math.min(herd.count, herd.walkers.length);
         let best = null;
         let bestD = Infinity;
         for (let i = 0; i < n; i++) {
             const w = herd.walkers[i];
             if (!w || !w.position) continue;
+            // The dead and the flinching are not worth a pass.
+            if (w.oneshot) continue;
             const d = Math.hypot(
                 w.position.x - this.position.x, w.position.z - this.position.z
             );
@@ -110,8 +121,20 @@ class SimPilot {
         return best;
     }
 
+    /** What this pass is attacking, or null when there is nothing to fight. */
+    _target() {
+        if (this._hitTroopers) {
+            const t = this._nearestOf(this.troopers, S.showAtst !== false);
+            if (t) return t;
+        }
+        return this._nearestOf(this.walkers, S.showWalker !== false);
+    }
+
     /** A fresh start point for the next pass: wide, low, new axis. */
     _pickRunPoint() {
+        // Roll what the pass goes after: mostly the infantry — that is where
+        // the drama is — falling back to armour when no squad is standing.
+        this._hitTroopers = Math.random() < TROOPER_PASS_CHANCE;
         const t = this._target();
         const cx = t ? t.position.x : this.anchor.x;
         const cz = t ? t.position.z : this.anchor.z;
@@ -168,8 +191,9 @@ class SimPilot {
             wantX = tx; wantZ = tz;
             this._speedTarget = SPEED_ATTACK;
             // Rise to hull height on the way in: the guns fire flat, so the
-            // run's altitude *is* the aim.
-            this._climbWant = 9 * scale;
+            // run's altitude *is* the aim — man-height against a squad.
+            this._climbWant = target.herd === this.troopers
+                ? TROOPER_RUN_ALT : 9 * scale;
             const err = Math.abs(wrapAngle(
                 Math.atan2(tx - this.position.x, tz - this.position.z) - this.facing
             ));
@@ -180,7 +204,8 @@ class SimPilot {
         } else if (this._phase === "attack") {
             wantX = tx; wantZ = tz;
             this._speedTarget = SPEED_ATTACK;
-            this._climbWant = 9 * scale;
+            this._climbWant = target.herd === this.troopers
+                ? TROOPER_RUN_ALT : 9 * scale;
             const err = Math.abs(wrapAngle(
                 Math.atan2(tx - this.position.x, tz - this.position.z) - this.facing
             ));
@@ -256,9 +281,9 @@ export class Wingman {
      * presentation needs, plus the herd it is fighting and the player it
      * falls back to orbiting.
      */
-    constructor(gfx, terrain, sky, shadows, asset, walkers, spray, player) {
+    constructor(gfx, terrain, sky, shadows, asset, walkers, spray, player, troopers) {
         this.terrain = terrain;
-        this.pilot = new SimPilot(terrain, walkers, player.position);
+        this.pilot = new SimPilot(terrain, walkers, player.position, troopers);
         this.craft = new Speeder(gfx, terrain, sky, shadows, asset, this.pilot, spray);
         this.craft.setVisible(true);
     }

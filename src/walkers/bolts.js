@@ -332,6 +332,9 @@ export class Bolts {
         const o = slot * 3;
         const x = this._hitAt[o], y = this._hitAt[o + 1], z = this._hitAt[o + 2];
         const dx = this._hitDir[o], dy = this._hitDir[o + 1], dz = this._hitDir[o + 2];
+        // Whoever cares where a bolt landed — the trooper squad flinching off
+        // the wingman's strafing runs.
+        ctx.onImpact?.(x, y, z);
         // Crater scale follows the bolt that made it. At the walker's default
         // look, width / WIDTH *is* `walkerScale`, so this reproduces the old
         // `max(0.5, S.walkerScale)` exactly — and a speeder's slimmer bolt digs

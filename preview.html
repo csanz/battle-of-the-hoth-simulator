@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>snowtrooper — clip preview</title>
+    <style>
+        html, body { margin: 0; height: 100%; background: #10141a; overflow: hidden; }
+        #clips {
+            position: fixed; top: 12px; left: 12px; display: flex; gap: 8px; flex-wrap: wrap;
+            font: 13px/1 system-ui, sans-serif;
+        }
+        #clips button {
+            padding: 8px 14px; border: 1px solid #3a4657; border-radius: 6px;
+            background: #1c2530; color: #cfd8e3; cursor: pointer;
+        }
+        #clips button.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+    </style>
+</head>
+<body>
+    <div id="clips"></div>
+    <script type="module">
+        import * as THREE from "three";
+        import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+        import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.9;
+        document.body.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x10141a);
+        scene.fog = new THREE.Fog(0x10141a, 8, 30);
+
+        const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.05, 100);
+        camera.position.set(2.2, 1.6, 3.2);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+
+        scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x30281e, 0.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.7);
+        sun.position.set(4, 6, 3);
+        sun.castShadow = true;
+        sun.shadow.mapSize.set(2048, 2048);
+        scene.add(sun);
+
+        const ground = new THREE.Mesh(
+            new THREE.CircleGeometry(20, 48),
+            new THREE.MeshStandardMaterial({ color: 0xdde6ee, roughness: 0.95 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const mixer = new THREE.AnimationMixer(scene);
+        let actions = {};
+        let current = null;
+
+        const modelName = new URLSearchParams(location.search).get("m") ?? "snowtrooper_gun";
+        new GLTFLoader().load(`/models/${modelName}.glb`, (gltf) => {
+            const model = gltf.scene;
+            // Whatever unit scale the FBX carried, normalise to ~1.8m tall
+            // with feet on the ground.
+            model.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const s = 1.8 / size.y;
+            model.scale.setScalar(s);
+            model.position.y = -box.min.y * s;
+            model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+            scene.add(model);
+
+            const bar = document.getElementById("clips");
+            for (const clip of gltf.animations) {
+                actions[clip.name] = mixer.clipAction(clip, model);
+                const btn = document.createElement("button");
+                btn.textContent = clip.name;
+                btn.onclick = () => play(clip.name);
+                bar.appendChild(btn);
+            }
+            play(gltf.animations[0]?.name);
+
+            function play(name) {
+                if (!name || name === current) return;
+                const next = actions[name];
+                next.reset();
+                next.clampWhenFinished = name === "Dying";
+                next.setLoop(name === "Dying" ? THREE.LoopOnce : THREE.LoopRepeat);
+                if (current) { actions[current].crossFadeTo(next, 0.25, false); next.play(); }
+                else next.play();
+                current = name;
+                for (const b of bar.children) b.classList.toggle("on", b.textContent === name);
+            }
+        });
+
+        window.viewer = { camera, controls, scene, THREE };
+
+        const clock = new THREE.Clock();
+        renderer.setAnimationLoop(() => {
+            mixer.update(clock.getDelta());
+            controls.update();
+            renderer.render(scene, camera);
+        });
+        addEventListener("resize", () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+    </script>
+</body>
+</html>

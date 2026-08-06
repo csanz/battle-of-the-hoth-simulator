@@ -166,6 +166,23 @@ export async function loadWalkerAsset(base, opts) {
         orm: null,
     };
 
+    // Extra clips, if the bake carried any (hit reactions, deaths). Each is a
+    // view into the same anim table; the runtime's cycle stays clip 0, which
+    // `header.frameCount`/`duration` still describe, so a model without these
+    // loads exactly as before.
+    out.clips = null;
+    if (header.clips) {
+        out.clips = {};
+        const stride = header.boneCount * 12;
+        for (const c of header.clips) {
+            out.clips[c.name] = {
+                anim: out.anim.subarray(c.frame0 * stride, (c.frame0 + c.frameCount) * stride),
+                frameCount: c.frameCount,
+                duration: c.duration,
+            };
+        }
+    }
+
     const size = header.textureSize;
     out.layers = layersFor(header.materials);
 

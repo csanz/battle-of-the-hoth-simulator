@@ -174,6 +174,31 @@ const DEFAULT_TUNE = {
     /** Metres out along the spawn bearing. See `SPAWN_DISTANCE`. */
     spawnDistance: () => SPAWN_DISTANCE,
     /**
+     * Hard ceiling on this herd, sizing its shared transform texture at build
+     * time. `MAX_WALKERS` suits machines; infantry comes in larger numbers.
+     */
+    maxCount: () => MAX_WALKERS,
+    /**
+     * Metres at which two of this herd start easing apart. The mechs' thirty
+     * would have a squad of troopers ten metres apart permanently trimming
+     * their tempo to escape each other.
+     */
+    separation: () => SEPARATION * /** @type {number} */ (S.walkerScale),
+    /**
+     * How far the feet sink through the crust, metres. At this mass the mechs
+     * punch well through; a walking soldier presses in a boot's depth.
+     */
+    sink: () => 0.35 * /** @type {number} */ (S.walkerScale),
+    /**
+     * Formation hook: given a machine's index, the {x, z} it should (re)enter
+     * at — used for escorts that belong *to* something rather than to the
+     * field, like troopers around an AT-ST. Null falls back to the bearing
+     * and depth layout; so does a call that returns null, so an escort whose
+     * anchor has nothing alive degrades to marching in on its own.
+     * @type {null | ((index: number) => {x:number, z:number}|null)}
+     */
+    anchor: null,
+    /**
      * Where a *recycled* machine re-enters, metres from the player. Deliberately
      * much deeper than the opening line: the first placement is a composition,
      * but a replacement is an arrival, and at this range the aerial perspective
@@ -262,9 +287,13 @@ function deriveFootfalls(anim, header) {
     }
 
     // Something that lifts, ordered by how close to the ground it gets. Sorted
-    // by depth rather than by travel: the deepest four are four soles.
+    // by depth rather than by travel: the deepest four are four soles. The
+    // lift threshold follows the machine — 60 cm is a stride for an AT-AT and
+    // three times a snowtrooper's whole step, so it scales with hull height
+    // and is capped at the original value the mechs were tuned against.
+    const lift = Math.min(0.6, header.height * 0.03);
     const feet = stat
-        .filter((s) => s.range > 0.6)
+        .filter((s) => s.range > lift)
         .sort((a, b) => a.lo - b.lo);
 
     const phases = [];
@@ -449,6 +478,16 @@ class Walker {
         this.rateBias = 1;
         this._rateWant = 1;
 
+        /**
+         * A one-shot clip playing instead of the cycle — a hit reaction, a
+         * death. While set, the machine stands still and `_writeRows` samples
+         * this clip (clamped, not looped) instead of the gait. See `react`.
+         * @type {null | {anim:Int16Array, frameCount:number, duration:number,
+         *                hold:boolean, linger:number}}
+         */
+        this.oneshot = null;
+        this._oneshotT = 0;
+
         this.lod = herd.lods.length - 1;
         this.material = this._makeSurfaceMaterial();
         this.mesh = this._buildMesh();
@@ -626,6 +665,24 @@ class Walker {
      * @param {number} dt @param {THREE.Vector3} target the player
      */
     step(dt, target) {
+        // A reaction owns the whole machine: no ground covered, no footfalls,
+        // no recycling out from under the clip. A holding clip (a death)
+        // freezes on its last frame and lies there for `linger` seconds, then
+        // the machine is placed anew — the herd's recycle, brought forward.
+        if (this.oneshot) {
+            this._oneshotT += dt;
+            const c = this.oneshot;
+            if (this._oneshotT >= c.duration) {
+                if (!c.hold) {
+                    this.oneshot = null;
+                } else if (this._oneshotT >= c.duration + c.linger) {
+                    this.oneshot = null;
+                    this.herd.place(this, target);
+                }
+            }
+            return;
+        }
+
         const scale = this.herd.tune.scale();
         const rate = this.herd.tune.speed();
 
@@ -651,7 +708,10 @@ class Walker {
             const crossed = prev <= this.phase
                 ? (p > prev && p <= this.phase)
                 : (p > prev || p <= this.phase);
-            if (crossed) this.stepCount++;
+            if (crossed) {
+                this.stepCount++;
+                this.herd.onStep?.(this);
+            }
         }
 
         // Off the back of the world, or walked past and away: put it out on the
@@ -659,6 +719,31 @@ class Walker {
         const away = Math.hypot(target.x - this.position.x, target.z - this.position.z);
         const leash = Math.hypot(this.position.x, this.position.z);
         if (away > RECYCLE || leash > LEASH) this.herd.place(this, target);
+    }
+
+    /**
+     * Play a baked one-shot clip — a hit reaction, a death — in place of the
+     * cycle. Needs a bake that carried extra clips (`header.clips`); on any
+     * other model this is a silent no-op, so callers never have to check.
+     *
+     * @param {string} name clip name as baked, e.g. "Hit Reaction"
+     * @param {{hold?: boolean, linger?: number}} [opts] `hold` freezes the
+     *   final frame instead of returning to the walk (a death); `linger` is
+     *   how long the body stays before the machine is recycled.
+     */
+    react(name, opts = {}) {
+        const clips = this.herd.clips;
+        const c = clips && clips[name];
+        // The dead don't flinch: a holding clip cannot be interrupted.
+        if (!c || (this.oneshot && this.oneshot.hold)) return;
+        this.oneshot = {
+            anim: c.anim,
+            frameCount: c.frameCount,
+            duration: c.duration,
+            hold: !!opts.hold,
+            linger: opts.linger ?? 0,
+        };
+        this._oneshotT = 0;
     }
 
     /**
@@ -712,7 +797,7 @@ class Walker {
         }
         // Sunk a little: at this mass the feet are through the crust, and a
         // machine floating exactly on the surface reads as a decal.
-        this.position.y = this._groundY - 0.35 * scale;
+        this.position.y = this._groundY - this.herd.tune.sink();
 
         this._composeWorld(scale);
         this._aimHead(dt, target);
@@ -922,13 +1007,24 @@ class Walker {
      */
     _writeRows(d) {
         const herd = this.herd;
-        const a = herd.anim;
-        const n = herd.frameCount;
         const bones = herd.boneCount;
 
-        const fpos = this.phase * n;
+        // The cycle, or the one-shot that has replaced it. A one-shot is
+        // clamped rather than wrapped — its last frame must not blend back
+        // into its first — and a held one keeps writing that last frame.
+        let a = herd.anim;
+        let n = herd.frameCount;
+        let fpos;
+        const one = this.oneshot;
+        if (one) {
+            a = one.anim;
+            n = one.frameCount;
+            fpos = Math.min(this._oneshotT / one.duration, 1) * (n - 1);
+        } else {
+            fpos = this.phase * n;
+        }
         const f0 = Math.floor(fpos) % n;
-        const f1 = (f0 + 1) % n;
+        const f1 = one ? Math.min(f0 + 1, n - 1) : (f0 + 1) % n;
         const t = fpos - Math.floor(fpos);
         const it = 1 - t;
 
@@ -1041,6 +1137,8 @@ export class WalkerHerd {
         this.basisScale = h.basisScale;
         this.transScale = h.transScale;
         this.anim = asset.anim;
+        /** Extra baked clips by name (hit reactions, deaths), or null. */
+        this.clips = asset.clips ?? null;
         this.boneScratch = new Float32Array(12);
         /** Cycle phases, 0..1, at which a foot is on the ground. */
         this.footfalls = deriveFootfalls(asset.anim, h);
@@ -1093,9 +1191,10 @@ export class WalkerHerd {
         // `snowCharSkin`; the only addition is the row offset that picks a block.
         //
         // Built before the walkers, which bind it into their materials.
-        this._texData = new Float32Array(this.boneCount * 4 * MAX_WALKERS * 4);
+        this._maxCount = Math.max(1, Math.round(this.tune.maxCount()));
+        this._texData = new Float32Array(this.boneCount * 4 * this._maxCount * 4);
         this.walkerTex = new THREE.DataTexture(
-            this._texData, this.boneCount, 4 * MAX_WALKERS,
+            this._texData, this.boneCount, 4 * this._maxCount,
             THREE.RGBAFormat, THREE.FloatType
         );
         this.walkerTex.colorSpace = THREE.NoColorSpace;
@@ -1174,7 +1273,14 @@ export class WalkerHerd {
          * @type {((m: THREE.RawShaderMaterial) => void)|null}
          */
         this.onMaterial = null;
-        this.setCount(Math.min(MAX_WALKERS, Math.max(1, Math.round(this.tune.count()))));
+        /**
+         * Called with the walker whose foot just landed — the hook the trooper
+         * squad's snow-kick rides. Null by default; the soundscape deliberately
+         * polls `stepCount` instead of using this (it owns "what sounds when").
+         * @type {((w: Walker) => void)|null}
+         */
+        this.onStep = null;
+        this.setCount(Math.min(this._maxCount, Math.max(1, Math.round(this.tune.count()))));
         this.setVisible(this.tune.visible());
     }
 
@@ -1203,7 +1309,7 @@ export class WalkerHerd {
      * @param {number} n
      */
     setCount(n) {
-        const want = Math.min(MAX_WALKERS, Math.max(0, Math.round(n)));
+        const want = Math.min(this._maxCount, Math.max(0, Math.round(n)));
         // Set before building, not after: `place()` centres the opening line on
         // the herd's size, and a walker placed while this still held the old
         // count would be framed for a herd it is not part of.
@@ -1246,6 +1352,25 @@ export class WalkerHerd {
         const side = (i % 2 === 0 ? 1 : -1) * Math.ceil(i / 2);
         const first = !walker._placed;
         walker._placed = true;
+
+        // An anchored machine belongs to something, not to the field: it enters
+        // where its anchor says — beside an AT-ST, wherever that is right now —
+        // and the shared tail below grounds it and aims it at the player like
+        // any other placement. Falls through if the anchor has nothing to offer.
+        if (this.tune.anchor) {
+            const a = this.tune.anchor(i);
+            if (a) {
+                const tx = target ? target.x : 0;
+                const tz = target ? target.z : 0;
+                walker.position.set(a.x, 0, a.z);
+                walker.position.y = this.terrain && this.terrain.heightAt
+                    ? this.terrain.heightAt(a.x, a.z) : 0;
+                walker.yaw = Math.atan2(tx - a.x, tz - a.z);
+                walker.phase = (i * 0.37) % 1;
+                walker._settled = false;
+                return;
+            }
+        }
 
         let bearing, lateral;
         if (first) {
@@ -1397,7 +1522,7 @@ export class WalkerHerd {
         // trim scales the ground speed and the cycle rate together — the feet stay
         // planted at any tempo — and no walker ever travels a millimetre off its
         // own heading.
-        const sep = SEPARATION * this.tune.scale();
+        const sep = this.tune.separation();
         for (let i = 0; i < n; i++) this.walkers[i]._rateWant = 1;
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {

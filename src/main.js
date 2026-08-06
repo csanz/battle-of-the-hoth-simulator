@@ -72,8 +72,10 @@ async function boot() {
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
     const walkerReady = loadWalkerAsset("models/walker");
-    // The AT-ST escort rides the same loader and the same herd machinery.
+    // The AT-ST escort rides the same loader and the same herd machinery —
+    // and so does the infantry walking beside it.
     const atstReady = loadWalkerAsset("models/atst");
+    const trooperReady = loadWalkerAsset("models/trooper");
     // Only when it is actually going to fly. Off — which is the default — the
     // speeder costs nothing at all: no fetch, no decode, no pipeline.
     const FLYING = S.speeder === true;
@@ -210,9 +212,69 @@ async function boot() {
             };
         },
         spawnDistance: () => 268,
+        // The default separation is thirty metres at walker scale; scouts
+        // stand nearer each other than mechs twelve times their mass.
+        separation: () => 30 * Math.max(0.4, /** @type {number} */ (S.atstScale)),
+        sink: () => 0.35 * /** @type {number} */ (S.atstScale),
     });
-    onChange("showAtst", (v) => atsts.setVisible(v));
     atsts.registerPrepass(depthPass);
+
+    // The snowtroopers: five per AT-ST, anchored around it — three walking
+    // the flanks, two trailing behind the hull. Same herd machinery again at
+    // a twelfth the height — the anchor hook places each squad around its
+    // scout wherever the scout is, entry and re-entry both, and the pace is
+    // pinned to the walkers' like everything else on this field, so the
+    // whole advance moves as one line.
+    const trooperAsset = await trooperReady;
+    const troopers = new WalkerHerd(gfx, terrain, sky, shadows, trooperAsset, rig, {
+        count: () => Math.min(30, Math.round(5 * /** @type {number} */ (S.atstCount))),
+        maxCount: () => 30,
+        scale: () => 1,
+        speed: () => {
+            const ground = walkers.baseSpeed
+                * /** @type {number} */ (S.walkerScale)
+                * /** @type {number} */ (S.walkerSpeed);
+            return ground / trooperAsset.header.speed;
+        },
+        snow: () => 0.15,
+        visible: () => S.showAtst !== false,
+        fire: () => false,
+        headLook: () => false,
+        separation: () => 2.2,
+        sink: () => 0.12,
+        anchor: (i) => {
+            const n = Math.min(atsts.count, atsts.walkers.length);
+            if (!n) return null;
+            const host = atsts.walkers[Math.floor(i / 5) % n];
+            const station = i % 5;
+            if (station >= 3) {
+                // The trailing pair: behind the hull along the scout's own
+                // heading, one off each shoulder, staggered in depth so they
+                // read as a file rather than a rank.
+                const back = host.yaw + Math.PI + (station === 3 ? -0.3 : 0.3);
+                const r = 11 + (station - 3) * 3;
+                return {
+                    x: host.position.x + Math.sin(back) * r,
+                    z: host.position.z + Math.cos(back) * r,
+                };
+            }
+            // Three stations around the hull — ahead-left, ahead-right, and
+            // trailing — pushed out past the feet, with a little per-squad
+            // twist so two escorts do not read as copies.
+            const angle = station * (Math.PI * 2 / 3)
+                + 0.55 + Math.floor(i / 5) * 0.9;
+            const r = 9 + station * 2.5;
+            return {
+                x: host.position.x + Math.sin(angle) * r,
+                z: host.position.z + Math.cos(angle) * r,
+            };
+        },
+    });
+    troopers.registerPrepass(depthPass);
+    onChange("showAtst", (v) => {
+        atsts.setVisible(v);
+        troopers.setVisible(v);
+    });
 
     // Airborne snow: footfall kick now, the surf plume and spell spray later.
     const spray = new SprayField(gfx, terrain, sky, shadows);
@@ -228,11 +290,35 @@ async function boot() {
     speeder?.registerPrepass(depthPass);
 
     // ------------------------------------------------------------ the wingman
-    // An AI T-47 in the fight — same presentation, different pilot.
+    // An AI T-47 in the fight — same presentation, different pilot. Handed the
+    // trooper herd too: most of its strafing runs go after the squads.
     const wingman = WINGMAN
-        ? new Wingman(gfx, terrain, sky, shadows, await speederReady, walkers, spray, character)
+        ? new Wingman(
+            gfx, terrain, sky, shadows, await speederReady,
+            walkers, spray, character, troopers
+        )
         : null;
     wingman?.registerPrepass(depthPass);
+
+    // Where the wingman's bolts land, the infantry reacts: anyone standing
+    // within a few metres of the burst takes it — mostly a flinch, sometimes
+    // the fall. The dead lie in the snow a while, then the herd recycles them
+    // back in at their squad's station like any other re-entry.
+    if (wingman?.craft?.bolts) {
+        wingman.craft.bolts.ctx.onImpact = (x, _y, z) => {
+            const n = Math.min(troopers.count, troopers.walkers.length);
+            for (let i = 0; i < n; i++) {
+                const w = troopers.walkers[i];
+                if (w.oneshot) continue;
+                if (Math.hypot(w.position.x - x, w.position.z - z) > 4.5) continue;
+                if (Math.random() < 0.25) {
+                    w.react("Dying", { hold: true, linger: 10 });
+                } else {
+                    w.react("Hit Reaction");
+                }
+            }
+        };
+    }
     speeder?.setVisible(true);
     showFigure();
 
@@ -240,6 +326,36 @@ async function boot() {
     // and the escort's, whose slimmer bolts kick up proportionally less of it.
     walkers.setSpray(spray);
     atsts.setSpray(spray);
+
+    // A trooper's footfall: the same boot print and heel-scoop kick the player
+    // character stamps (see `SnowContact`), sized to a walking soldier and
+    // fired off the herd's own footfall counter — so every step both marks the
+    // snow and throws a little of it, which is what sells twelve small figures
+    // as *wading* rather than gliding. Feet alternate on step parity.
+    troopers.onStep = (w) => {
+        const fx = Math.sin(w.yaw), fz = Math.cos(w.yaw);
+        const side = (w.stepCount % 2 === 0 ? 1 : -1) * 0.18;
+        const px = w.position.x + fz * side + fx * 0.12;
+        const pz = w.position.z - fx * side + fz * 0.12;
+        terrain.deform.brush(
+            px, pz, 0.10, 0.16, 0.09, 0.9, 0, w.yaw, 1.7, 1.0
+        );
+        for (let k = 0; k < 7; k++) {
+            const rx = (Math.random() - 0.5) * 0.9;
+            const rz = (Math.random() - 0.5) * 0.9;
+            const clod = Math.random() < 0.22 ? 1 : 0;
+            spray.emit(
+                px + rx * 0.09, w.position.y + 0.03 + Math.random() * 0.05,
+                pz + rz * 0.09,
+                -fx * (0.4 + Math.random() * 0.9) + rx * 1.2,
+                (0.8 + Math.random() * 1.5) * (clod ? 1.25 : 1),
+                -fz * (0.4 + Math.random() * 0.9) + rz * 1.2,
+                clod ? 0.014 + Math.random() * 0.012 : 0.02 + Math.random() * 0.03,
+                0.5 + Math.random() * 0.5,
+                clod
+            );
+        }
+    };
 
     // Feet and the surf groove write into the terrain state buffer through here.
     const contact = new SnowContact(character, terrain.deform, figure.figure, spray);
@@ -272,6 +388,8 @@ async function boot() {
     for (const w of walkers.walkers) spells.addConsumers(w.material);
     atsts.onMaterial = (m) => spells.addConsumers(m);
     for (const w of atsts.walkers) spells.addConsumers(w.material);
+    troopers.onMaterial = (m) => spells.addConsumers(m);
+    for (const w of troopers.walkers) spells.addConsumers(w.material);
     spells.registerPrepass(depthPass);
 
     // The rig needs ground heights to keep the spring arm above the snow.
@@ -347,6 +465,8 @@ async function boot() {
     await walkers.warmUp();
     atsts.sync(rig.camera.position);
     await atsts.warmUp();
+    troopers.sync(rig.camera.position);
+    await troopers.warmUp();
     destroyers.update(character.position, rig.camera.position);
     await destroyers.warmUp();
     if (speeder) {
@@ -410,6 +530,7 @@ async function boot() {
         // row of the overlay as the rest of the scene's inhabitants.
         walkers.update(dt, character.position);
         atsts.update(dt, character.position);
+        troopers.update(dt, character.position);
         speeder?.tick(dt);
         speeder?.update(dt);
         wingman?.tick(dt);
@@ -448,6 +569,7 @@ async function boot() {
         // camera and this frame's field of view.
         walkers.sync(rig.camera.position);
         atsts.sync(rig.camera.position);
+        troopers.sync(rig.camera.position);
         speeder?.sync(rig.camera.position);
         wingman?.sync(rig.camera.position);
         // The fleet holds formation on the player; three matrix writes.
@@ -490,6 +612,7 @@ async function boot() {
             (wingman ? wingman.triangles : 0) +
             walkers.triangles +
             atsts.triangles +
+            troopers.triangles +
             (wake.mesh && wake.mesh.visible ? wake.mesh.metadata.triangles : 0) +
             spells.triangles +
             spray.liveCount * 2;
@@ -538,7 +661,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, speeder, wingman, contact, spray, wake, spells, destroyers,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, troopers, speeder, wingman, contact, spray, wake, spells, destroyers,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,
