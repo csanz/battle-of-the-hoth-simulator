@@ -43,13 +43,17 @@ camera/player/herd as a pinnable opening shot.
 
 ## The engine
 
-Three.js used strictly as a WebGL2 rasterizer: every shader is hand-written
-GLSL (no Three materials, lights, shadows, or tonemapping), ported
-line-for-line from the original's WGSL — clipmap terrain over GPU-baked
-heightfields, a deformation simulation the snow remembers with, cascaded
-shadow maps, a depth prepass feeding TAA/SSR/DoF, volumetric shafts, AgX
-tonemapping. The full porting plan, binding contracts and per-subsystem specs
-live under [`port/`](port/).
+**Pure Three.js — Babylon.js is gone entirely.** The original SNOWFLOW ran on
+Babylon.js/WebGPU; this is a complete port, and the only runtime dependency
+left in `package.json` is `three`. Three.js is used strictly as a WebGL2
+rasterizer: every shader is hand-written GLSL (no Three materials, lights,
+shadows, or tonemapping), ported line-for-line from the original's WGSL —
+clipmap terrain over GPU-baked heightfields, a deformation simulation the
+snow remembers with, cascaded shadow maps, a depth prepass feeding
+TAA/SSR/DoF, volumetric shafts, AgX tonemapping. The full porting plan,
+binding contracts and per-subsystem specs live under [`port/`](port/).
+(Babylon still appears in code *comments* — deliberate notes explaining what
+each piece replaced.)
 
 ## Credits
 
