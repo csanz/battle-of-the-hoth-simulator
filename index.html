@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>SNOWFLOW — Battle of Hoth</title>
+<!-- The boot screen's backdrop, requested before the CSS asks for it, so the
+     first paint is the battle rather than a gradient the photo pops in over. -->
+<link rel="preload" as="image" href="/boot-bg.jpg" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%E2%9D%84%EF%B8%8F%3C/text%3E%3C/svg%3E" />
 <style>
     :root {
         /* Cool-shadow palette pulled from the Horizon reference. */

@@ -352,19 +352,6 @@ export const S = {
      * off needs a reload.
      */
     showWingman: true,
-    /**
-     * Who flies the wingman: "ai" is the built-in strafing-run pilot, "tape"
-     * replays the player's own recorded flying (falls back to ai until a
-     * tape exists). Tapes persist in localStorage across reloads.
-     */
-    wingmanMode: "tape",
-    /**
-     * Flip on, fly (speeder mode), flip off — the last ~3 minutes are kept,
-     * saved, and handed to the wingman. The point: the AI's runs are
-     * competent and therefore boring; nobody flies like a person but a
-     * person. Record the show-off pass yourself and the ghost repeats it.
-     */
-    recordFlight: false,
 
     // ---------------------------------------------------------------- walker
     /** The machines on the horizon. Off hides them and stops them stepping. */
@@ -636,8 +623,6 @@ export const SCHEMA = [
             { k: "destroyerBearing", l: "Bearing", t: "f", min: -90, max: 90, step: 1 },
             { k: "destroyerYaw", l: "Heading", t: "f", min: -180, max: 180, step: 1 },
             { k: "showWingman", l: "Wingman (reload)", t: "b" },
-            { k: "wingmanMode", l: "Wingman flies", t: "e", opts: ["ai", "tape"] },
-            { k: "recordFlight", l: "Record flight", t: "b" },
         ],
     },
     {

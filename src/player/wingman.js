@@ -30,7 +30,6 @@ import * as THREE from "three";
 import { S } from "../core/settings.js";
 import { expDamp } from "../core/camera.js";
 import { Speeder } from "./speeder.js";
-import { ReplayPilot } from "./flightRecorder.js";
 
 /** Hard physical limits, matched to the player's craft so it reads as one. */
 const TURN_MAX = 2.1;        // rad/s — just under the player's uncapped feel
@@ -260,26 +259,8 @@ export class Wingman {
     constructor(gfx, terrain, sky, shadows, asset, walkers, spray, player) {
         this.terrain = terrain;
         this.pilot = new SimPilot(terrain, walkers, player.position);
-        /** @type {ReplayPilot|null} the player's recorded flying, if any */
-        this.tapePilot = null;
         this.craft = new Speeder(gfx, terrain, sky, shadows, asset, this.pilot, spray);
         this.craft.setVisible(true);
-    }
-
-    /**
-     * Hand the wingman a tape of the player's flying. From here on, with
-     * "Wingman flies" set to tape, the ghost is the player.
-     * @param {Float32Array|null} tape
-     */
-    setTape(tape) {
-        if (!tape) return;
-        if (this.tapePilot) this.tapePilot.setTape(tape);
-        else this.tapePilot = new ReplayPilot(this.terrain, tape);
-    }
-
-    /** The pilot the settings currently seat in the cockpit. */
-    _activePilot() {
-        return S.wingmanMode === "tape" && this.tapePilot ? this.tapePilot : this.pilot;
     }
 
     get triangles() { return this.craft.triangles; }
@@ -295,11 +276,7 @@ export class Wingman {
         const on = S.showWingman !== false;
         this.craft.setVisible(on);
         if (!on) return;
-        const pilot = this._activePilot();
-        // The craft's controller is just a reference — reseat the cockpit
-        // whenever the mode (or a fresh tape) changes it.
-        if (this.craft.controller !== pilot) this.craft.controller = pilot;
-        pilot.update(dt);
+        this.pilot.update(dt);
         this.craft.update(dt);
     }
 

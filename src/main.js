@@ -27,7 +27,6 @@ import { WalkerHerd } from "./walkers/walker.js";
 import { loadWalkerAsset } from "./walkers/walkerAsset.js";
 import { Speeder } from "./player/speeder.js";
 import { Wingman } from "./player/wingman.js";
-import { FlightRecorder } from "./player/flightRecorder.js";
 import { Overlay } from "./ui/overlay.js";
 import { createFpsMeter } from "./ui/fpsMeter.js";
 import { Sky } from "./render/sky.js";
@@ -181,18 +180,6 @@ async function boot() {
         ? new Wingman(gfx, terrain, sky, shadows, await speederReady, walkers, spray, character)
         : null;
     wingman?.registerPrepass(depthPass);
-
-    // The tape deck. A persisted tape reseats the wingman's cockpit at boot;
-    // flipping "Record flight" off saves the new one and hands it over live.
-    const recorder = new FlightRecorder();
-    wingman?.setTape(FlightRecorder.load());
-    onChange("recordFlight", () => {
-        if (S.recordFlight) {
-            recorder.start();
-        } else if (recorder.recording && recorder.stop()) {
-            wingman?.setTape(recorder.tape());
-        }
-    });
     speeder?.setVisible(true);
     showFigure();
 
@@ -367,10 +354,6 @@ async function boot() {
         speeder?.update(dt);
         wingman?.tick(dt);
         wingman?.update(dt);
-        // Sim-clamped dt, matching the controller's own integration step —
-        // wall dt would stamp slow-motion samples whenever the frame rate
-        // dips below 30.
-        if (recorder.recording) recorder.sample(character, input, Math.min(dt, 1 / 30));
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
@@ -478,6 +461,9 @@ async function boot() {
     if (unlocking) {
         await unlocking;
         soundscape.start();
+        // Luke, over the fading boot screen — a beat after the click so the
+        // context is warm and the line lands clean.
+        audio.play("lukeIntro", { delay: 0.5 });
     }
     soundButton.sync();
 
@@ -490,7 +476,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, speeder, wingman, recorder, contact, spray, wake, spells, destroyers,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, speeder, wingman, contact, spray, wake, spells, destroyers,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,
