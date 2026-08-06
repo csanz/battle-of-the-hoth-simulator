@@ -249,7 +249,7 @@ export const S = {
      * it buys, not by the guns — see `Speeder.streak01`. Multiplies into the
      * post chain's own `streakStrength`.
      */
-    speederStreak: 1.0,
+    speederStreak: 0.55,
     /**
      * Draw one of the lighting's inputs instead of the shaded craft.
      *

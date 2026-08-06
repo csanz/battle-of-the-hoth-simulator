@@ -226,7 +226,12 @@ export class SnowContact {
         // thrown berms fade quadratically with the climb, and are gone well
         // before the ceiling — snow that high is not being touched.
         const near = 1 - Math.min(1, Math.max(0, ch.lift01 || 0));
-        const k = Math.min(moved, 0.6) * s * speedK * near * near;
+        // A hovering craft moves far less snow than a board with a rider's
+        // weight on its edge: downwash disturbs the surface, it does not
+        // carve it. Less than half the board's bite, or a low pass leaves a
+        // scar that reads as ploughing rather than flying.
+        const craft = S.speeder !== false ? 0.4 : 1;
+        const k = Math.min(moved, 0.6) * s * speedK * near * near * craft;
         if (k <= 0.001) return;
 
         // Past the point where the trench stops deepening, extra speed still
