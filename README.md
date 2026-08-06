@@ -75,6 +75,12 @@ each piece replaced.)
   derivative in `public/models/` exactly as it covers the source `.glb`; it
   does not extend to the rest of this repository, but it does mean the demo
   cannot be used commercially while the model is in it.
+- **AT-ST walker** — baked conversion of
+  [*"Imperial AT-ST Walker - Star Wars"* by **Quiznos323**](https://sketchfab.com/3d-models/imperial-at-st-walker-star-wars-d867c101e5314c33b528cffbe40c0db3)
+  (Sketchfab), used under
+  [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) —
+  the same licence and the same terms as the AT-AT above, covering the baked
+  derivative in `public/models/atst.bin`.
 - **T-47 snowspeeder** — fan-made community model, baked to
   `public/models/speeder.bin`. Its original author is not recorded in this
   repository's history; if that's you, open an issue and the credit lands

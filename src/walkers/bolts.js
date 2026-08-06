@@ -338,16 +338,23 @@ export class Bolts {
         // a proportionally smaller (floored) hole with the same character.
         const scale = Math.max(0.5, this._lookNow().width / WIDTH);
         const steep = Math.min(1, Math.abs(dy));
+        // How much of a show the hit is. Follows the same width ratio as the
+        // crater, clamped to unity so the walker's tuned look is untouched —
+        // this only *reduces* the display for slimmer bolts (the AT-ST's),
+        // whose impact should be a kick of snow rather than a shellburst.
+        const drama = Math.min(1, scale);
 
         const spray = ctx.spray;
         if (spray) {
-            const total = (IMPACT_SPRAY * S.spellSpray) | 0;
+            const total = (IMPACT_SPRAY * S.spellSpray * drama) | 0;
             for (let k = 0; k < total; k++) {
                 const a = Math.random() * Math.PI * 2;
                 const ca = Math.cos(a), sa = Math.sin(a);
-                const out = (2.4 + Math.random() * 7.5) * (0.5 + 0.9 * (1 - steep));
+                const out = (2.4 + Math.random() * 7.5) * (0.5 + 0.9 * (1 - steep))
+                    * (0.55 + 0.45 * drama);
                 // Most of it goes up: this is an explosion, not a splash.
-                const up = (5.5 + Math.random() * 12.0) * (0.55 + 0.7 * steep);
+                const up = (5.5 + Math.random() * 12.0) * (0.55 + 0.7 * steep)
+                    * (0.55 + 0.45 * drama);
                 const clod = Math.random() < 0.42 ? 1 : 0;
                 spray.emit(
                     x + ca * 0.2, y + 0.06 + Math.random() * 0.3, z + sa * 0.2,

@@ -135,6 +135,55 @@ const SEPARATION = 30;
 const LOD_PIXELS = [420, 150];
 const LOD_HYSTERESIS = 1.22;
 
+/**
+ * Everything herd-specific that used to be a direct `S.walker*` read, as one
+ * overridable object — so a second herd (the AT-ST escort) can run the same
+ * machinery against its own settings without the two fighting over sliders.
+ * Every entry is a getter, not a value, because the sliders are live.
+ */
+const DEFAULT_TUNE = {
+    scale: () => /** @type {number} */ (S.walkerScale),
+    speed: () => /** @type {number} */ (S.walkerSpeed),
+    count: () => /** @type {number} */ (S.walkerCount),
+    visible: () => S.showWalker !== false,
+    fire: () => S.walkerFire !== false,
+    snow: () => /** @type {number} */ (S.walkerSnow),
+    /** Head tracking. Off, the guns fire straight down the hull's heading. */
+    headLook: () => true,
+    /**
+     * Fire only while the hull is riding the level part of its gait. The AT-ST
+     * cabin nods some seven degrees through its cycle, and a bolt leaving a
+     * face that is pointed at the snow reads as a misfire. Off for the AT-AT,
+     * whose head barely moves and whose cadence is tuned already.
+     */
+    levelGate: () => false,
+    muzzle: () => ({
+        span: /** @type {number} */ (S.walkerMuzzleSpan),
+        y: /** @type {number} */ (S.walkerMuzzleY),
+        z: /** @type {number} */ (S.walkerMuzzleZ),
+    }),
+    bolt: () => {
+        const s = Math.max(0.4, /** @type {number} */ (S.walkerScale));
+        return {
+            r: S.walkerBoltR, g: S.walkerBoltG, b: S.walkerBoltB,
+            width: S.walkerBoltWidth * s,
+            reach: S.walkerBoltReach * s,
+            speed: S.walkerBoltSpeed,
+        };
+    },
+    /** Metres out along the spawn bearing. See `SPAWN_DISTANCE`. */
+    spawnDistance: () => SPAWN_DISTANCE,
+    /**
+     * Where a *recycled* machine re-enters, metres from the player. Deliberately
+     * much deeper than the opening line: the first placement is a composition,
+     * but a replacement is an arrival, and at this range the aerial perspective
+     * has it half-dissolved — it comes up out of the haze already walking, and
+     * is never seen to appear. Kept under `RECYCLE` (520) or it would be put
+     * straight back the moment it landed.
+     */
+    respawnDistance: () => 470,
+};
+
 // ------------------------------------------------------- module-scope scratch
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -292,9 +341,18 @@ function deriveHead(asset, header) {
     let pivotZ = Infinity, pivotY = 0;
     let noseZ = -Infinity, headTop = 0, headBottom = Infinity;
     let found = 0;
+    // The hull's attitude reference: the heaviest bone riding high on the
+    // machine — the AT-AT's head mass, the AT-ST's whole cabin. Not gated on
+    // being forward like the head chain is, because a cabin centred over the
+    // legs is exactly the thing whose nod the fire gate needs to watch.
+    let poseBone = -1, poseVerts = 0;
     for (let b = 0; b < bones; b++) {
         if (!live[b]) continue;
         const y = at[b * 3 + 1], z = at[b * 3 + 2];
+        if (y > max[1] * 0.55 && count[b] > poseVerts) {
+            poseVerts = count[b];
+            poseBone = b;
+        }
         // Forward of the hull and high on it. Loose enough to take the neck
         // segments as well as the head: rotating a head off a neck that stays
         // put opens a seam at the collar.
@@ -308,7 +366,10 @@ function deriveHead(asset, header) {
     }
 
     if (!found) {
-        return { bones: null, pivot: [0, 0, 0], height: 0, muzzles: null, aim: null };
+        return {
+            bones: null, pivot: [0, 0, 0], height: 0, muzzles: null, aim: null,
+            poseBone,
+        };
     }
 
     // The chin guns: either side of the nose, low on the face. Slightly proud of
@@ -329,6 +390,7 @@ function deriveHead(asset, header) {
         // A point straight out of the face, used to derive the firing direction
         // through whatever rotation the head currently has.
         aim: new Float32Array([0, chinY, noseOut + 40]),
+        poseBone,
     };
 }
 
@@ -481,7 +543,7 @@ class Walker {
             fogStart: { value: S.fogStart },
             aerialStrength: { value: S.aerialStrength },
             ambientIntensity: { value: S.ambientIntensity },
-            snowCover: { value: S.walkerSnow },
+            snowCover: { value: herd.tune.snow() },
             // The debug views are the speeder's; the walker always shades normally.
             debugView: { value: 0 },
             debugGain: { value: 1 },
@@ -564,8 +626,8 @@ class Walker {
      * @param {number} dt @param {THREE.Vector3} target the player
      */
     step(dt, target) {
-        const scale = S.walkerScale;
-        const rate = S.walkerSpeed;
+        const scale = this.herd.tune.scale();
+        const rate = this.herd.tune.speed();
 
         // Ground speed and cycle rate come off the same number, which is the
         // entire mechanism that keeps the feet planted.
@@ -606,7 +668,7 @@ class Walker {
      * @param {THREE.Vector3} [target] the player
      */
     settle(dt, texData, target) {
-        const scale = S.walkerScale;
+        const scale = this.herd.tune.scale();
         _fwd.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
         _right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
 
@@ -673,7 +735,7 @@ class Walker {
         let wantYaw = 0;
         let wantPitch = 0;
 
-        if (herd.headBones && target) {
+        if (herd.headBones && target && herd.tune.headLook()) {
             const dx = target.x - this.position.x;
             const dz = target.z - this.position.z;
             const dist = Math.hypot(dx, dz);
@@ -688,7 +750,7 @@ class Walker {
                 wantYaw = Math.max(-LOOK_YAW_MAX, Math.min(LOOK_YAW_MAX, rel)) * near;
                 // Look down at something on the ground. The head is twenty metres
                 // up, so the closer it gets the further down it has to look.
-                const drop = herd.headHeight * S.walkerScale;
+                const drop = herd.headHeight * herd.tune.scale();
                 wantPitch = Math.min(LOOK_PITCH_MAX, Math.atan2(drop, Math.max(dist, 1))) * near;
             }
         }
@@ -726,7 +788,7 @@ class Walker {
      */
     _fire(dt) {
         const herd = this.herd;
-        if (!herd.muzzles || S.walkerFire === false) return;
+        if (!herd.muzzles || !herd.tune.fire()) return;
 
         this._fireTimer -= dt;
         if (this._fireTimer > 0) return;
@@ -735,11 +797,27 @@ class Walker {
         const dist = target
             ? Math.hypot(target.x - this.position.x, target.z - this.position.z)
             : Infinity;
-        if (dist > FIRE_RANGE * S.walkerScale) {
+        if (dist > FIRE_RANGE * herd.tune.scale()) {
             // Out of range: check again shortly rather than banking a burst that
             // would fire the instant it closed.
             this._fireTimer = 0.6;
             return;
+        }
+
+        // Hold fire while the hull is nodding down through its gait — the shot
+        // waits for the level part of the cycle rather than being lost. See
+        // `_levelLo` for the calibration; the mid-burst second barrel is
+        // exempt, because a pair split across two nods reads as two misses.
+        if (
+            herd.tune.levelGate() && herd.poseBone >= 0 && this._barrel % 2 === 0
+        ) {
+            const f = Math.floor(this.phase * herd.frameCount) % herd.frameCount;
+            const fy = herd.anim[(f * herd.boneCount + herd.poseBone) * 12 + 7]
+                * herd.basisScale;
+            if (fy < herd._levelLo) {
+                this._fireTimer = 0.09;
+                return;
+            }
         }
 
         // Muzzle in world space: the local chin position, through the head's own
@@ -748,9 +826,10 @@ class Walker {
         // zeroed sliders are exactly the model's own gun heads.
         const local = herd.muzzles[this._barrel % herd.muzzles.length];
         this._barrel++;
-        _muzzleLocal[0] = local[0] + Math.sign(local[0]) * S.walkerMuzzleSpan;
-        _muzzleLocal[1] = local[1] + S.walkerMuzzleY;
-        _muzzleLocal[2] = local[2] + S.walkerMuzzleZ;
+        const mz = herd.tune.muzzle();
+        _muzzleLocal[0] = local[0] + Math.sign(local[0]) * mz.span;
+        _muzzleLocal[1] = local[1] + mz.y;
+        _muzzleLocal[2] = local[2] + mz.z;
         this._muzzleWorld(_muzzleLocal, this.muzzle);
         this._muzzleWorld(herd.muzzleAim, _tmp);
         this.muzzleDir.set(
@@ -912,7 +991,7 @@ class Walker {
         u.fogStart.value = S.fogStart;
         u.aerialStrength.value = S.aerialStrength;
         u.ambientIntensity.value = S.ambientIntensity;
-        u.snowCover.value = S.walkerSnow;
+        u.snowCover.value = this.herd.tune.snow();
         // The debug views are the speeder's; the walker always shades normally.
         u.debugView.value = 0;
         u.debugGain.value = 1;
@@ -940,13 +1019,16 @@ export class WalkerHerd {
      * @param {import("../render/shadows.js").ShadowSystem} shadows
      * @param {import("./walkerAsset.js").WalkerAsset} asset
      * @param {{ yaw:number, camera:{ fov:number, viewProjection:THREE.Matrix4 } }} rig
+     * @param {Partial<typeof DEFAULT_TUNE>} [tune] herd-specific settings
+     *   overrides — see `DEFAULT_TUNE`. Omitted entries read the AT-AT sliders.
      */
-    constructor(gfx, terrain, sky, shadows, asset, rig) {
+    constructor(gfx, terrain, sky, shadows, asset, rig, tune) {
         this.gfx = gfx;
         this.terrain = terrain;
         this.sky = sky;
         this.shadows = shadows;
         this.rig = rig;
+        this.tune = { ...DEFAULT_TUNE, ...tune };
 
         const h = asset.header;
         this.boneCount = h.boneCount;
@@ -971,6 +1053,23 @@ export class WalkerHerd {
         this.headHeight = head.height;
         this.muzzles = head.muzzles;
         this.muzzleAim = head.aim;
+
+        // The level gate's calibration: the hull bone's forward-axis pitch,
+        // scanned over the whole cycle. Firing is allowed in the top part of
+        // that range — self-measured, so it holds for any model whatever its
+        // gait's amplitude, and costs one row of the anim table once at boot.
+        this.poseBone = head.poseBone ?? -1;
+        this._levelLo = -Infinity;
+        if (this.poseBone >= 0) {
+            let lo = Infinity, hi = -Infinity;
+            for (let f = 0; f < h.frameCount; f++) {
+                const fy = asset.anim[(f * h.boneCount + this.poseBone) * 12 + 7]
+                    * h.basisScale;
+                if (fy < lo) lo = fy;
+                if (fy > hi) hi = fy;
+            }
+            this._levelLo = lo + (hi - lo) * 0.6;
+        }
         /**
          * The bolts every walker in the herd fires, in one pool and one draw.
          * Owned here rather than per walker for the same reason the geometry is:
@@ -979,16 +1078,8 @@ export class WalkerHerd {
         this.bolts = new Bolts(gfx, {
             terrain, spray: null,
             // Tunable look (overlay "Walker" section); the scale multiplier the
-            // default look applied stays on top so size tracks the machine.
-            look: () => {
-                const s = Math.max(0.4, S.walkerScale);
-                return {
-                    r: S.walkerBoltR, g: S.walkerBoltG, b: S.walkerBoltB,
-                    width: S.walkerBoltWidth * s,
-                    reach: S.walkerBoltReach * s,
-                    speed: S.walkerBoltSpeed,
-                };
-            },
+            // default look applies stays on top so size tracks the machine.
+            look: () => this.tune.bolt(),
         });
         if (rig && rig.camera && rig.camera.viewProjection) {
             this.bolts.material.uniforms.viewProjection.value = rig.camera.viewProjection;
@@ -1083,8 +1174,8 @@ export class WalkerHerd {
          * @type {((m: THREE.RawShaderMaterial) => void)|null}
          */
         this.onMaterial = null;
-        this.setCount(Math.min(MAX_WALKERS, Math.max(1, Math.round(S.walkerCount))));
-        this.setVisible(S.showWalker !== false);
+        this.setCount(Math.min(MAX_WALKERS, Math.max(1, Math.round(this.tune.count()))));
+        this.setVisible(this.tune.visible());
     }
 
     /**
@@ -1151,7 +1242,7 @@ export class WalkerHerd {
      */
     place(walker, target) {
         const i = walker.index;
-        const scale = S.walkerScale;
+        const scale = this.tune.scale();
         const side = (i % 2 === 0 ? 1 : -1) * Math.ceil(i / 2);
         const first = !walker._placed;
         walker._placed = true;
@@ -1188,8 +1279,14 @@ export class WalkerHerd {
             lateral = side * SPAWN_SPREAD * scale + (i % 3) * 11 - 11;
         }
 
-        // Uneven depth so the line is a group rather than a rank.
-        const depth = SPAWN_DISTANCE + (i % 3) * 30;
+        // Uneven depth so the line is a group rather than a rank. A recycled
+        // machine re-enters from much deeper than the opening line stood — far
+        // enough into the haze that it is discovered mid-march rather than
+        // watched appearing — clamped inside `RECYCLE`, or the stagger could
+        // land it past the boundary and it would be re-placed every frame.
+        const depth = first
+            ? this.tune.spawnDistance() + (i % 3) * 30
+            : Math.min(this.tune.respawnDistance() + (i % 3) * 30, RECYCLE - 25);
         const tx = target ? target.x : 0;
         const tz = target ? target.z : 0;
 
@@ -1256,19 +1353,18 @@ export class WalkerHerd {
      */
     collectMuzzles(markers) {
         if (!this.muzzles || !this._visible) return;
-        const s = Math.max(0.4, S.walkerScale);
+        const s = Math.max(0.4, this.tune.scale());
+        const mz = this.tune.muzzle();
+        const bolt = this.tune.bolt();
         for (let i = 0; i < Math.min(this.count, this.walkers.length); i++) {
             const w = this.walkers[i];
             for (let m = 0; m < this.muzzles.length; m++) {
                 const local = this.muzzles[m];
-                _muzzleLocal[0] = local[0] + Math.sign(local[0]) * S.walkerMuzzleSpan;
-                _muzzleLocal[1] = local[1] + S.walkerMuzzleY;
-                _muzzleLocal[2] = local[2] + S.walkerMuzzleZ;
+                _muzzleLocal[0] = local[0] + Math.sign(local[0]) * mz.span;
+                _muzzleLocal[1] = local[1] + mz.y;
+                _muzzleLocal[2] = local[2] + mz.z;
                 w._muzzleWorld(_muzzleLocal, _tmp);
-                markers.add(
-                    _tmp.x, _tmp.y, _tmp.z, 0.35 * s,
-                    S.walkerBoltR, S.walkerBoltG, S.walkerBoltB
-                );
+                markers.add(_tmp.x, _tmp.y, _tmp.z, 0.35 * s, bolt.r, bolt.g, bolt.b);
             }
         }
     }
@@ -1282,7 +1378,7 @@ export class WalkerHerd {
     update(dt, target) {
         this._lastTarget = target;
         this._lastDt = dt;
-        if (S.walkerCount !== this.count) this.setCount(S.walkerCount);
+        if (this.tune.count() !== this.count) this.setCount(this.tune.count());
         if (!this._visible) return;
 
         const n = this.count;
@@ -1301,7 +1397,7 @@ export class WalkerHerd {
         // trim scales the ground speed and the cycle rate together — the feet stay
         // planted at any tempo — and no walker ever travels a millimetre off its
         // own heading.
-        const sep = SEPARATION * S.walkerScale;
+        const sep = SEPARATION * this.tune.scale();
         for (let i = 0; i < n; i++) this.walkers[i]._rateWant = 1;
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
@@ -1344,7 +1440,7 @@ export class WalkerHerd {
         // widens the FOV with speed, so this is recomputed rather than cached.
         const fov = this.rig && this.rig.camera ? this.rig.camera.fov : 1.02;
         const pxPerMetre = this.gfx.renderHeight / (2 * Math.tan(fov * 0.5));
-        const hullHeight = this.height * S.walkerScale;
+        const hullHeight = this.height * this.tune.scale();
 
         for (let i = 0; i < this.count; i++) {
             const w = this.walkers[i];

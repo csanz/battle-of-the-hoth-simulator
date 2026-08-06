@@ -399,6 +399,27 @@ export const S = {
     walkerMuzzleSpan: 0.0,
     walkerMuzzleY: 0.0,
     walkerMuzzleZ: 0.42,
+
+    // ----------------------------------------------------------------- at-st
+    /**
+     * The AT-ST escort: scout walkers on the same baked-herd machinery as the
+     * AT-ATs (`models/atst.bin`), spawned deeper so they come in from behind
+     * the line. Their gait speed is the clip's own measured 3.17 m/s.
+     */
+    showAtst: true,
+    /** How many scouts. Live, like `walkerCount`; same `MAX_WALKERS` cap. */
+    atstCount: 3,
+    /** Multiplier on the canonical 8.6 m hull. */
+    atstScale: 1.0,
+    /**
+     * Pace trim *relative to the AT-ATs*. The escort's ground speed is pinned
+     * to the walkers' (see the tuning in `main.js`) so the scouts hold
+     * formation behind the line rather than overtaking it; 1 is exactly the
+     * herd's pace, and this scales on top for a hurrying or a lagging escort.
+     */
+    atstSpeed: 1.0,
+    /** Snow on the hull's upward faces. Less than the AT-ATs: it moves more. */
+    atstSnow: 0.3,
     /**
      * Draw a ring at every point a cannon bolt is born — walker chin guns and
      * speeder wingtips — through hulls, riding the muzzle sliders live. A
@@ -645,6 +666,11 @@ export const SCHEMA = [
             { k: "walkerSpeed", l: "Gait rate", t: "f", min: 0, max: 5, step: 0.05 },
             { k: "walkerSnow", l: "Snow on hull", t: "f", min: 0, max: 1, step: 0.01 },
             { k: "walkerFire", l: "Cannons", t: "b" },
+            { k: "showAtst", l: "AT-STs", t: "b" },
+            { k: "atstCount", l: "AT-ST count", t: "f", min: 0, max: 6, step: 1 },
+            { k: "atstScale", l: "AT-ST scale", t: "f", min: 0.4, max: 3, step: 0.05 },
+            { k: "atstSpeed", l: "AT-ST gait", t: "f", min: 0, max: 5, step: 0.05 },
+            { k: "atstSnow", l: "AT-ST snow", t: "f", min: 0, max: 1, step: 0.01 },
         ],
     },
     {

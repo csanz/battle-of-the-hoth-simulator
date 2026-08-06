@@ -72,6 +72,8 @@ async function boot() {
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
     const walkerReady = loadWalkerAsset("models/walker");
+    // The AT-ST escort rides the same loader and the same herd machinery.
+    const atstReady = loadWalkerAsset("models/atst");
     // Only when it is actually going to fly. Off — which is the default — the
     // speeder costs nothing at all: no fetch, no decode, no pipeline.
     const FLYING = S.speeder === true;
@@ -161,6 +163,57 @@ async function boot() {
     onChange("showWalker", (v) => walkers.setVisible(v));
     walkers.registerPrepass(depthPass);
 
+    // The AT-ST escort: scouts on the same machinery, tuned to their own
+    // sliders and spawned deeper than the AT-AT line (200-260 m), so they
+    // come up the field from behind it. No head tracking and no cannons —
+    // the head geometry the deriver finds on this rig is most of the cabin,
+    // and a cabin that swivels to stare at the player is a different machine.
+    const atstAsset = await atstReady;
+    const atsts = new WalkerHerd(gfx, terrain, sky, shadows, atstAsset, rig, {
+        count: () => /** @type {number} */ (S.atstCount),
+        scale: () => /** @type {number} */ (S.atstScale),
+        // Paced to the herd, not to their own clip. The AT-ST's cycle walks at
+        // 3.17 m/s to the AT-AT's 1.45, and an escort that outruns its line and
+        // arrives first is leading a charge. The rate is chosen so ground speed
+        // equals the AT-ATs' — tracking their scale and gait sliders live —
+        // and the cycle slows with it, so the feet stay planted; `S.atstSpeed`
+        // rides on top as a trim *relative to the walkers*.
+        speed: () => {
+            const walkerGround = walkers.baseSpeed
+                * /** @type {number} */ (S.walkerScale)
+                * /** @type {number} */ (S.walkerSpeed);
+            const atstAtRate1 = atstAsset.header.speed
+                * Math.max(0.05, /** @type {number} */ (S.atstScale));
+            return (walkerGround / atstAtRate1) * /** @type {number} */ (S.atstSpeed);
+        },
+        snow: () => /** @type {number} */ (S.atstSnow),
+        visible: () => S.showAtst !== false,
+        // The chin gun, under the same overlay toggle as the walkers' cannons.
+        // No head tracking — the deriver's "head" on this rig is gun mounts
+        // without the cabin — so the shots go straight down the heading, and
+        // the level gate holds them for the flat part of the gait.
+        fire: () => S.walkerFire !== false,
+        headLook: () => false,
+        levelGate: () => true,
+        // The derived muzzle pair sits at the AT-AT's +-1.05 m chin span; the
+        // AT-ST's twin barrels are dead centre of the face, so the span offset
+        // walks both onto the middle, slightly tucked back toward the plating.
+        muzzle: () => ({ span: -0.9, y: -0.15, z: -0.5 }),
+        // Red, slim, and shorter-lived than the walker's magenta shell — a
+        // scout's gun, not artillery. The width is also what keys the smaller
+        // crater and spray at the impact end.
+        bolt: () => {
+            const s = Math.max(0.4, /** @type {number} */ (S.atstScale));
+            return {
+                r: 1.0, g: 0.16, b: 0.10,
+                width: 0.55 * s, reach: 420 * s, speed: 1.1,
+            };
+        },
+        spawnDistance: () => 268,
+    });
+    onChange("showAtst", (v) => atsts.setVisible(v));
+    atsts.registerPrepass(depthPass);
+
     // Airborne snow: footfall kick now, the surf plume and spell spray later.
     const spray = new SprayField(gfx, terrain, sky, shadows);
     // Tuning rings on the gun heads, live under the overlay's muzzle sliders.
@@ -183,8 +236,10 @@ async function boot() {
     speeder?.setVisible(true);
     showFigure();
 
-    // The walkers' cannons throw snow into the same pool everything else does.
+    // The walkers' cannons throw snow into the same pool everything else does —
+    // and the escort's, whose slimmer bolts kick up proportionally less of it.
     walkers.setSpray(spray);
+    atsts.setSpray(spray);
 
     // Feet and the surf groove write into the terrain state buffer through here.
     const contact = new SnowContact(character, terrain.deform, figure.figure, spray);
@@ -215,6 +270,8 @@ async function boot() {
     // built rather than being enumerated once here.
     walkers.onMaterial = (m) => spells.addConsumers(m);
     for (const w of walkers.walkers) spells.addConsumers(w.material);
+    atsts.onMaterial = (m) => spells.addConsumers(m);
+    for (const w of atsts.walkers) spells.addConsumers(w.material);
     spells.registerPrepass(depthPass);
 
     // The rig needs ground heights to keep the spring arm above the snow.
@@ -272,7 +329,7 @@ async function boot() {
     // stays silent until `start()`, which only happens on the gesture that
     // unlocks the engine — the boot gate below, or the corner button later.
     const soundscape = new Soundscape(
-        audio, { controller: character, spells, walkers, speeder }
+        audio, { controller: character, spells, walkers, atst: atsts, speeder }
     );
     const soundButton = createSoundButton(audio, { onEnable: () => soundscape.start() });
 
@@ -288,6 +345,8 @@ async function boot() {
     await figure.warmUp();
     walkers.sync(rig.camera.position);
     await walkers.warmUp();
+    atsts.sync(rig.camera.position);
+    await atsts.warmUp();
     destroyers.update(character.position, rig.camera.position);
     await destroyers.warmUp();
     if (speeder) {
@@ -350,6 +409,7 @@ async function boot() {
         // after the controller has moved. Here, so their cost lands in the same
         // row of the overlay as the rest of the scene's inhabitants.
         walkers.update(dt, character.position);
+        atsts.update(dt, character.position);
         speeder?.tick(dt);
         speeder?.update(dt);
         wingman?.tick(dt);
@@ -387,6 +447,7 @@ async function boot() {
         // Also picks each walker's level of detail, which needs this frame's
         // camera and this frame's field of view.
         walkers.sync(rig.camera.position);
+        atsts.sync(rig.camera.position);
         speeder?.sync(rig.camera.position);
         wingman?.sync(rig.camera.position);
         // The fleet holds formation on the player; three matrix writes.
@@ -428,6 +489,7 @@ async function boot() {
             (speeder ? speeder.triangles : 0) +
             (wingman ? wingman.triangles : 0) +
             walkers.triangles +
+            atsts.triangles +
             (wake.mesh && wake.mesh.visible ? wake.mesh.metadata.triangles : 0) +
             spells.triangles +
             spray.liveCount * 2;
@@ -476,7 +538,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, speeder, wingman, contact, spray, wake, spells, destroyers,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, speeder, wingman, contact, spray, wake, spells, destroyers,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,

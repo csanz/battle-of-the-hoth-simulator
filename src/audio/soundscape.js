@@ -142,9 +142,13 @@ export class Soundscape {
         this.controller = refs.controller;
         this.spells = refs.spells ?? null;
         this.walkers = refs.walkers ?? null;
+        /** The AT-ST escort — same herd shape, its own counters. */
+        this.atst = refs.atst ?? null;
         /** Last footfall and shot counts seen per walker, so only new ones sound. */
         this._steps = [];
         this._shots = [];
+        this._atstSteps = [];
+        this._atstShots = [];
 
         /** @type {import("./engine.js").LoopVoice|null} */
         this.ambience = null;
@@ -368,7 +372,15 @@ export class Soundscape {
         }
 
         // ------------------------------------------------------------ walkers
-        this._walkerSteps();
+        this._herdSteps(this.walkers, this._steps, this._shots,
+            S.showWalker !== false, 1, 1, "walkerShot");
+        // The scouts: lighter and quicker steps, and their own cannon sample —
+        // an 8.6 m machine through the pitch and level a 22 m one was tuned at
+        // reads as a herd of one size, and these are not that. The shot rides
+        // the same distance falloff and speed-of-sound delay as everything
+        // else, so a far scout's gun is a distant crack and a near one snaps.
+        this._herdSteps(this.atst, this._atstSteps, this._atstShots,
+            S.showAtst !== false, 0.5, 1.3, "atstShot");
     }
 
     /**
@@ -385,25 +397,36 @@ export class Soundscape {
      * of a second after you watch it land. That second one is nearly free — the
      * engine's `play` already takes a delay — and it is the cue that sells the
      * scale of the thing better than the level ever does.
+     *
+     * Generalised over the herd: the AT-ATs and the AT-ST escort run the same
+     * counters with their own memory arrays, and the multipliers are what make
+     * a scout's footfall lighter and faster-pitched than a walker's.
+     *
+     * @param {import("../walkers/walker.js").WalkerHerd|null} herd
+     * @param {(number|undefined)[]} steps per-walker footfall counts last seen
+     * @param {(number|undefined)[]} shots per-walker shot counts last seen
+     * @param {boolean} on the herd's own visibility toggle
+     * @param {number} gainMul level multiplier on both samples
+     * @param {number} rateMul pitch multiplier on both samples
+     * @param {string} shotKey manifest key for this herd's cannon
      */
-    _walkerSteps() {
-        const herd = this.walkers;
-        if (!herd || S.showWalker === false) return;
+    _herdSteps(herd, steps, shots, on, gainMul, rateMul, shotKey) {
+        if (!herd || !on) return;
 
         const me = this.controller.position;
         for (let i = 0; i < herd.count; i++) {
             const w = herd.walkers[i];
-            const seen = this._steps[i];
+            const seen = steps[i];
             // First sight of this walker: adopt its count rather than firing a
             // step for every one it has taken since it was built. Written back
             // before the early-out, or the adoption never sticks and the counter
             // is permanently "unchanged".
             if (seen === undefined) {
-                this._steps[i] = w.stepCount;
+                steps[i] = w.stepCount;
                 continue;
             }
             if (w.stepCount === seen) continue;
-            this._steps[i] = w.stepCount;
+            steps[i] = w.stepCount;
 
             const d = Math.hypot(w.position.x - me.x, w.position.z - me.z);
             if (d > STEP_AUDIBLE) continue;
@@ -411,9 +434,9 @@ export class Soundscape {
             const near = 1 - d / STEP_AUDIBLE;
             // A little detune per step, weighted by which foot it was, so a
             // four-legged gait does not tick like a metronome.
-            const rate = 0.93 + (i % 2) * 0.05 + Math.random() * 0.09;
+            const rate = (0.93 + (i % 2) * 0.05 + Math.random() * 0.09) * rateMul;
             this.audio.play("walkerStep", {
-                gain: near * near,
+                gain: near * near * gainMul,
                 rate,
                 delay: Math.min(1.6, d / SPEED_OF_SOUND),
             });
@@ -422,15 +445,19 @@ export class Soundscape {
         // ---- the guns ------------------------------------------------------
         for (let i = 0; i < herd.count; i++) {
             const w = herd.walkers[i];
-            const seen = this._shots[i];
-            if (seen === undefined) { this._shots[i] = w.shotCount; continue; }
+            const seen = shots[i];
+            if (seen === undefined) { shots[i] = w.shotCount; continue; }
             if (w.shotCount === seen) continue;
-            this._shots[i] = w.shotCount;
+            shots[i] = w.shotCount;
 
             const d = Math.hypot(w.position.x - me.x, w.position.z - me.z);
             if (d > SHOT_AUDIBLE) continue;
             const near = 1 - d / SHOT_AUDIBLE;
-            this.audio.play("walkerShot", {
+            // No `gainMul`/`rateMul` here: those exist to make the *shared*
+            // step sample read as a smaller machine, and each herd's cannon is
+            // its own recording with its own manifest level. Distance is the
+            // only thing that scales a shot.
+            this.audio.play(shotKey, {
                 gain: 0.25 + 0.75 * near * near,
                 rate: 0.94 + Math.random() * 0.1,
                 delay: Math.min(1.6, d / SPEED_OF_SOUND),
@@ -438,9 +465,9 @@ export class Soundscape {
         }
         // Adopt the counts of any walker that appeared since the last frame, so
         // a herd grown by the slider does not fire a burst of backdated steps.
-        for (let i = herd.count; i < this._steps.length; i++) {
-            this._steps[i] = undefined;
-            this._shots[i] = undefined;
+        for (let i = herd.count; i < steps.length; i++) {
+            steps[i] = undefined;
+            shots[i] = undefined;
         }
     }
 

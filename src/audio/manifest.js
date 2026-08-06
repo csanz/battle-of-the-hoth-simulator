@@ -172,6 +172,16 @@ export const AUDIO_MANIFEST = {
         minGap: 0.05,
     },
 
+    // The AT-ST's chin gun — the escort's own voice, snappier and lighter than
+    // the walker cannon above. Same no-`exclusive` reasoning: two scouts firing
+    // are two events, and the soundscape scales the level with distance.
+    atstShot: {
+        url: "audio/at-st-cannon.mp3",
+        bus: "sfx",
+        gain: 0.45,
+        minGap: 0.05,
+    },
+
     // The speeder's cannons, alternating. Two samples rather than one detuned,
     // because the pair are audibly different weapons firing and a single sample
     // pitched about is the fastest way to make a rate-of-fire sound like a loop.
