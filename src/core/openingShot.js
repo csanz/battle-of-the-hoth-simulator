@@ -22,10 +22,12 @@
  * is the rule rather than a capture.
  */
 
+import { input } from "./input.js";
+
 /**
  * @typedef {{
  *   camera: { yaw: number, pitch: number, distance: number },
- *   player: { x: number, z: number },
+ *   player: { x: number, z: number, facing?: number, rise?: boolean, climb?: number },
  *   walkers: Array<{ x: number, z: number, yaw: number, phase?: number }>,
  * }} OpeningShot
  */
@@ -35,7 +37,14 @@
  * frame itself.
  * @type {OpeningShot|null}
  */
-export const OPENING = null;
+export const OPENING = {
+    camera: { yaw: -0.072, pitch: 0.213, distance: 11 },
+    player: { x: 42.543, z: 17.645, facing: 0.266, rise: true, climb: 6 },
+    walkers: [
+        { x: 48.875, z: 170.187, yaw: -2.862, phase: 0.384 },
+        { x: 102.774, z: 179.76, yaw: -2.622, phase: 0.754 },
+    ],
+};
 
 /**
  * Put the world into a captured shot.
@@ -65,6 +74,14 @@ export function applyOpening(shot, rig, character, herd, terrain) {
         // The craft's heading, not just its parking spot — a speeder start
         // aimed at nothing is half a shot.
         if (shot.player.facing !== undefined) character.facing = shot.player.facing;
+        // The E-latch: a shot captured at cruise altitude should *open* at
+        // cruise altitude, latch held, not sink to the deck on frame one.
+        if (shot.player.rise !== undefined) input.rise = !!shot.player.rise;
+        if (shot.player.climb !== undefined && character._climb !== undefined) {
+            character._climb = shot.player.climb;
+            character.climb = shot.player.climb;
+            character.position.y += shot.player.climb;
+        }
     }
 
     const list = shot.walkers || [];
@@ -108,7 +125,8 @@ export function captureOpening(rig, character, herd) {
         `    camera: { yaw: ${n(rig.yaw)}, pitch: ${n(rig.pitch)}, ` +
             `distance: ${n(rig.distanceTarget)} },`,
         `    player: { x: ${n(character.position.x)}, z: ${n(character.position.z)}, ` +
-            `facing: ${n(character.facing)} },`,
+            `facing: ${n(character.facing)}, rise: ${!!input.rise}, ` +
+            `climb: ${n(character.climb || 0)} },`,
         "    walkers: [",
         ...walkers.map(
             (w) => `        { x: ${w.x}, z: ${w.z}, yaw: ${w.yaw}, phase: ${w.phase} },`

@@ -54,10 +54,14 @@ live under [`port/`](port/).
 ## Credits
 
 - **The snow** — the rendering core is a full port of
-  [**SNOWFLOW**](https://github.com/csanz/snowflow_demo) by
-  [Christian Sanz](https://github.com/csanz) (MIT), a Babylon.js/WebGPU
-  real-time snow tech demo: procedural terrain, sky, deformation, shading and
-  post chain all originate there, translated wholesale to raw WebGL2/GLSL.
+  [**SNOWFLOW**](https://github.com/Noniv/snowflow_demo) by
+  [**Noniv** (Maksymilian Dendura)](https://github.com/Noniv) (MIT), a
+  Babylon.js/WebGPU real-time snow tech demo: the procedural terrain, sky,
+  snow deformation, shading and post chain all originate in that work,
+  translated wholesale to raw WebGL2/GLSL here.
+- **The battle** — the Star Wars theme and the Battle of Hoth simulation on
+  top of it (the flyable speeder, walkers in combat, the fleet, the wingman
+  and the rest) by [Christian Sanz](https://github.com/csanz).
 - **AT-AT walker** — baked conversion of
   [*"Imperial AT-AT Walker - Star Wars"* by **Quiznos323**](https://sketchfab.com/3d-models/imperial-at-at-walker-star-wars-7eab3f41da9143d8975b9034e91f8920)
   (Sketchfab), used under
