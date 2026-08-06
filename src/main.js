@@ -7,6 +7,7 @@
  */
 
 import * as THREE from "three";
+import { inject as injectAnalytics } from "@vercel/analytics";
 
 import { registerShaders } from "./shaders/registry.js";
 import { S, onChange, applyPreset } from "./core/settings.js";
@@ -51,6 +52,12 @@ const _vel = new THREE.Vector3();
 
 /** Beauty clear — linear (§2.6). */
 const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
+
+// Vercel Web Analytics: page views and visitors on the deployment. The
+// injected script is served from the site's own origin (/_vercel/insights),
+// so there is nothing to allowlist; in dev it runs in debug mode and sends
+// nothing.
+injectAnalytics();
 
 async function boot() {
     const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("view"));
