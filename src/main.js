@@ -26,9 +26,12 @@ import { SpellSystem } from "./spells/spellSystem.js";
 import { WalkerHerd } from "./walkers/walker.js";
 import { loadWalkerAsset } from "./walkers/walkerAsset.js";
 import { Speeder } from "./player/speeder.js";
+import { Wingman } from "./player/wingman.js";
+import { FlightRecorder } from "./player/flightRecorder.js";
 import { Overlay } from "./ui/overlay.js";
 import { createFpsMeter } from "./ui/fpsMeter.js";
 import { Sky } from "./render/sky.js";
+import { Destroyers } from "./render/destroyers.js";
 import { ShadowSystem } from "./render/shadows.js";
 import { Terrain } from "./terrain/terrain.js";
 import { DepthPass } from "./render/depthPass.js";
@@ -80,7 +83,12 @@ async function boot() {
     // darker still, when a T-47 is a light grey aircraft. So the maps arrive in
     // the space they are wanted in and something else is eating the value. The
     // option stays because the next model through here may genuinely need it.
-    const speederReady = FLYING ? loadWalkerAsset("models/speeder") : null;
+    // The wingman flies the same model whether or not the player does, so the
+    // craft asset loads if either seat is occupied. Latched at boot like
+    // S.speeder — the toggle needs a reload to *create* the craft, and only
+    // hides it live.
+    const WINGMAN = S.showWingman !== false;
+    const speederReady = FLYING || WINGMAN ? loadWalkerAsset("models/speeder") : null;
 
     await loading.phase("creating device", 0.05);
 
@@ -104,6 +112,10 @@ async function boot() {
     // ------------------------------------------------------------------ sky
     await loading.phase("integrating atmosphere", 0.2);
     const sky = new Sky(gfx);
+    // The Imperial fleet on station over the walkers' bearing — set dressing,
+    // loaded async and tolerated absent.
+    const destroyers = new Destroyers(gfx, sky);
+    destroyers.bindCamera(rig.camera.viewProjection);
     await sky.solve();
 
     // -------------------------------------------------------------- shadows
@@ -162,6 +174,25 @@ async function boot() {
         ? new Speeder(gfx, terrain, sky, shadows, await speederReady, character, spray)
         : null;
     speeder?.registerPrepass(depthPass);
+
+    // ------------------------------------------------------------ the wingman
+    // An AI T-47 in the fight — same presentation, different pilot.
+    const wingman = WINGMAN
+        ? new Wingman(gfx, terrain, sky, shadows, await speederReady, walkers, spray, character)
+        : null;
+    wingman?.registerPrepass(depthPass);
+
+    // The tape deck. A persisted tape reseats the wingman's cockpit at boot;
+    // flipping "Record flight" off saves the new one and hands it over live.
+    const recorder = new FlightRecorder();
+    wingman?.setTape(FlightRecorder.load());
+    onChange("recordFlight", () => {
+        if (S.recordFlight) {
+            recorder.start();
+        } else if (recorder.recording && recorder.stop()) {
+            wingman?.setTape(recorder.tape());
+        }
+    });
     speeder?.setVisible(true);
     showFigure();
 
@@ -268,11 +299,14 @@ async function boot() {
     await figure.warmUp();
     walkers.sync(rig.camera.position);
     await walkers.warmUp();
+    destroyers.update(character.position, rig.camera.position);
+    await destroyers.warmUp();
     if (speeder) {
         speeder.update(0);
         speeder?.sync(rig.camera.position);
         await speeder.warmUp();
     }
+    if (wingman) await wingman.warmUp();
     spray.update(0, rig.camera.position);
     await spray.warmUp();
     await wake.warmUp();
@@ -329,6 +363,12 @@ async function boot() {
         walkers.update(dt, character.position);
         speeder?.tick(dt);
         speeder?.update(dt);
+        wingman?.tick(dt);
+        wingman?.update(dt);
+        // Sim-clamped dt, matching the controller's own integration step —
+        // wall dt would stamp slow-motion samples whenever the frame rate
+        // dips below 30.
+        if (recorder.recording) recorder.sample(character, input, Math.min(dt, 1 / 30));
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
@@ -363,6 +403,9 @@ async function boot() {
         // camera and this frame's field of view.
         walkers.sync(rig.camera.position);
         speeder?.sync(rig.camera.position);
+        wingman?.sync(rig.camera.position);
+        // The fleet holds formation on the player; three matrix writes.
+        destroyers.update(character.position, rig.camera.position);
         // The tuning rings, after every transform they pin to has settled.
         muzzleMarkers.begin();
         if (S.showMuzzles) {
@@ -398,6 +441,7 @@ async function boot() {
             (terrain.mesh && terrain.mesh.metadata ? terrain.mesh.metadata.triangles : 0) +
             (S.showCharacter && !FLYING ? figure.triangles : 0) +
             (speeder ? speeder.triangles : 0) +
+            (wingman ? wingman.triangles : 0) +
             walkers.triangles +
             (wake.mesh && wake.mesh.visible ? wake.mesh.metadata.triangles : 0) +
             spells.triangles +
@@ -444,7 +488,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, speeder, contact, spray, wake, spells,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, speeder, wingman, recorder, contact, spray, wake, spells, destroyers,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,

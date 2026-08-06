@@ -29,16 +29,18 @@ const LENGTH = 7.5;
 const WIDTH = 0.42;
 const FLARE = 1.25;
 
-const _origins = new Float32Array(NOZZLES * 4);
-const _dir = new THREE.Vector4(0, 0, -1, LENGTH);
-const _params = new THREE.Vector4(0, 0, WIDTH, FLARE);
-
 export class Jet {
     /** @param {import("../core/gfx.js").Gfx} gfx */
     constructor(gfx) {
         this.gfx = gfx;
         this._time = 0;
         this._cameraPos = new THREE.Vector3();
+        // Per-instance, because they are the uniform VALUES: as module scratch
+        // (the original layout) a second craft's jet would overwrite the
+        // player's flame every frame — both plumes drawn from one buffer.
+        this._origins = new Float32Array(NOZZLES * 4);
+        this._dir = new THREE.Vector4(0, 0, -1, LENGTH);
+        this._params = new THREE.Vector4(0, 0, WIDTH, FLARE);
         /**
          * The jittered view-projection of the frame being drawn. Babylon
          * auto-bound this from the active camera; here it is recomputed from
@@ -102,9 +104,9 @@ export class Jet {
             uniforms: {
                 viewProjection: { value: this._viewProj },
                 cameraPos: { value: this._cameraPos },
-                jetOrigin: { value: _origins },
-                jetDir: { value: _dir },
-                jetParams: { value: _params },
+                jetOrigin: { value: this._origins },
+                jetDir: { value: this._dir },
+                jetParams: { value: this._params },
                 jetGlow: { value: 1 },
                 jetHaloBack: { value: 0.1 },
             },
@@ -136,17 +138,18 @@ export class Jet {
         const spanX = nozzle.spanX;
         const backZ = nozzle.backZ;
         const dropY = nozzle.dropY;
+        const origins = this._origins;
         for (let n = 0; n < NOZZLES; n++) {
             const lx = n === 0 ? -spanX : spanX;
             const o = n * 4;
-            _origins[o] = world[0] * lx + world[3] * dropY + world[6] * backZ + world[9];
-            _origins[o + 1] = world[1] * lx + world[4] * dropY + world[7] * backZ + world[10];
-            _origins[o + 2] = world[2] * lx + world[5] * dropY + world[8] * backZ + world[11];
-            _origins[o + 3] = 1;
+            origins[o] = world[0] * lx + world[3] * dropY + world[6] * backZ + world[9];
+            origins[o + 1] = world[1] * lx + world[4] * dropY + world[7] * backZ + world[10];
+            origins[o + 2] = world[2] * lx + world[5] * dropY + world[8] * backZ + world[11];
+            origins[o + 3] = 1;
         }
         // Straight out of the back, in world space.
-        _dir.set(-world[6], -world[7], -world[8], LENGTH * S.jetLength);
-        _params.set(throttle, this._time, WIDTH * S.jetWidth, FLARE * S.jetFlare);
+        this._dir.set(-world[6], -world[7], -world[8], LENGTH * S.jetLength);
+        this._params.set(throttle, this._time, WIDTH * S.jetWidth, FLARE * S.jetFlare);
         this.material.uniforms.jetGlow.value = S.jetGlow ?? 1;
         this.material.uniforms.jetHaloBack.value = S.jetHaloBack ?? 0.1;
         // The uniform values are the scratch objects themselves, mutated above —

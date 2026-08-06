@@ -326,6 +326,46 @@ export const S = {
      */
     speederClimbRate: 2.2,
 
+    // ----------------------------------------------------------------- fleet
+    /**
+     * The Imperial fleet on station: baked, shadowless, textureless Star
+     * Destroyers hung high over the bearing the walkers march in from. Set
+     * dressing — they hold formation relative to the player like the far
+     * mountains do, so the shot is always composed.
+     */
+    showDestroyers: true,
+    destroyerCount: 3,
+    /** Metres above the field. */
+    destroyerAlt: 850,
+    /** Metres out along the fleet bearing. */
+    destroyerDist: 2600,
+    /** Uniform scale on the ~1.5 km hull — forced perspective knob. */
+    destroyerScale: 0.35,
+    /** Degrees off the sun's azimuth (where the walkers come from). */
+    destroyerBearing: 12,
+    /** Formation heading, degrees — turns every hull's profile at once. */
+    destroyerYaw: 55,
+    /**
+     * The AI wingman: a second T-47 flying strafing runs on the walkers.
+     * Read at boot to decide whether the craft is built at all (like
+     * `speeder`); mid-session the toggle only hides it, and enabling it from
+     * off needs a reload.
+     */
+    showWingman: true,
+    /**
+     * Who flies the wingman: "ai" is the built-in strafing-run pilot, "tape"
+     * replays the player's own recorded flying (falls back to ai until a
+     * tape exists). Tapes persist in localStorage across reloads.
+     */
+    wingmanMode: "tape",
+    /**
+     * Flip on, fly (speeder mode), flip off — the last ~3 minutes are kept,
+     * saved, and handed to the wingman. The point: the AI's runs are
+     * competent and therefore boring; nobody flies like a person but a
+     * person. Record the show-off pass yourself and the ghost repeats it.
+     */
+    recordFlight: false,
+
     // ---------------------------------------------------------------- walker
     /** The machines on the horizon. Off hides them and stops them stepping. */
     showWalker: true,
@@ -583,6 +623,21 @@ export const SCHEMA = [
             { k: "camBoostBreath", l: "Boost breath", t: "f", min: 0, max: 2, step: 0.01 },
             { k: "speederClimbMax", l: "Climb height", t: "f", min: 0, max: 30, step: 0.5 },
             { k: "speederClimbRate", l: "Climb response", t: "f", min: 0.3, max: 6, step: 0.1 },
+        ],
+    },
+    {
+        group: "Fleet",
+        items: [
+            { k: "showDestroyers", l: "Star Destroyers", t: "b" },
+            { k: "destroyerCount", l: "Count", t: "f", min: 1, max: 3, step: 1 },
+            { k: "destroyerAlt", l: "Altitude", t: "f", min: 200, max: 2000, step: 10 },
+            { k: "destroyerDist", l: "Distance", t: "f", min: 800, max: 3600, step: 20 },
+            { k: "destroyerScale", l: "Scale", t: "f", min: 0.05, max: 1, step: 0.01 },
+            { k: "destroyerBearing", l: "Bearing", t: "f", min: -90, max: 90, step: 1 },
+            { k: "destroyerYaw", l: "Heading", t: "f", min: -180, max: 180, step: 1 },
+            { k: "showWingman", l: "Wingman (reload)", t: "b" },
+            { k: "wingmanMode", l: "Wingman flies", t: "e", opts: ["ai", "tape"] },
+            { k: "recordFlight", l: "Record flight", t: "b" },
         ],
     },
     {

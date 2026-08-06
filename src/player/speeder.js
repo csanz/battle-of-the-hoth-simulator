@@ -569,8 +569,12 @@ export class Speeder {
         // Cruising without shift sits between the two and much closer to the
         // hover: moving at speed is not the same as reheat, and if the plume is
         // already fully out at cruise the boost has nothing left to say.
-        const drive = input.moving ? 1 : 0;
-        const boosting = input.sprint ? 1 : 0;
+        // The pilot's stick beats the player's keyboard: an AI-driven craft
+        // (the wingman) publishes driveHeld/boostHeld on its controller, and
+        // the player's controller publishes none, falling through to `input`.
+        const c2 = this.controller;
+        const drive = (c2.driveHeld ?? input.moving) ? 1 : 0;
+        const boosting = (c2.boostHeld ?? input.sprint) ? 1 : 0;
         // Three readable states rather than a curve: holding station, under way,
         // and lit up. W is a *basic* jet — visibly running, plainly not trying —
         // and shift is the one that stretches it, because a plume already at
@@ -648,7 +652,7 @@ export class Speeder {
         // Floor it first: a long hitch — or a trigger released for a while —
         // must not bank shots and pay them out as a burst.
         if (this._fireTimer < -FIRE_RATE) this._fireTimer = 0;
-        if (!input.fire || this._fireTimer > 0) return;
+        if (!(this.controller.fireHeld ?? input.fire) || this._fireTimer > 0) return;
         // Carry the negative remainder into the next period instead of
         // discarding it, so the cadence holds at FIRE_RATE exactly instead of
         // wandering by up to a frame per shot.
