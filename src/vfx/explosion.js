@@ -39,8 +39,10 @@ const LIFT = 2.4;
 const EMB_PER = 22;
 const EMB_N = MAX * EMB_PER;
 
-/** Seconds between bursts, globally — drama is a scarcity economy. */
-const COOLDOWN = 1.5;
+/** Seconds between bursts, globally — drama is a scarcity economy. Short
+ *  enough that the walkers' incoming shells visibly claim their share of it
+ *  alongside the player's and the wingmen's fire. */
+const COOLDOWN = 1.0;
 /** How often a qualifying impact actually blossoms. */
 const CHANCE = 0.6;
 
@@ -126,6 +128,8 @@ export class Explosions {
         this._emDelay = new Float32Array(EMB_N);
         this._emSize = new Float32Array(EMB_N);
         this._emSeed = new Float32Array(EMB_N);
+        /** False once every ember is dead and the buffers hold the zeros. */
+        this._emberDirty = false;
 
         this.emberMaterial = makeMaterial({
             name: "ember",
@@ -268,6 +272,7 @@ export class Explosions {
             this._emSize[i] = (0.45 + Math.random() * 0.9) * (hero ? 1.6 : 1);
             this._emSeed[i] = Math.random();
         }
+        this._emberDirty = true;
     }
 
     /** @param {number} dt @param {THREE.Vector3} cameraPos */
@@ -297,8 +302,18 @@ export class Explosions {
         this.mesh.visible = live > 0 && S.showExplosions !== false;
 
         // ---- embers --------------------------------------------------------
-        const heightAt = this.terrain && this.terrain.heightAt
-            ? (x, z) => this.terrain.heightAt(x, z) : null;
+        // Idle, the whole block is three comparisons: every ember dead, the
+        // buffers already zeroed, nothing simulated and nothing uploaded.
+        // The pool spends most of the game in exactly that state, and a
+        // steady ~11 KB/frame of attribute upload for an empty pool is the
+        // kind of quiet tax this codebase does not pay.
+        if (!this._emberDirty && live === 0) {
+            this.emberMesh.visible = false;
+            this.emberMaterial.uniforms.emberTime.value = this._time;
+            this.material.uniforms.explosionGlow.value = S.explosionGlow ?? 1;
+            return;
+        }
+        const terrain = this.terrain;
         let emberLive = 0;
         const posAttr = this.emberMesh.geometry.attributes.position;
         const velAttr = this.emberMesh.geometry.attributes.aVel;
@@ -317,8 +332,9 @@ export class Explosions {
                 this._emPos[i * 3 + 2] += this._emVel[i * 3 + 2] * dt;
                 // Dead the moment it meets the snow: an ember does not bounce,
                 // it quenches.
-                if (heightAt && this._emPos[i * 3 + 1] <
-                    heightAt(this._emPos[i * 3], this._emPos[i * 3 + 2]) + 0.05) {
+                if (terrain && terrain.heightAt && this._emPos[i * 3 + 1] <
+                    terrain.heightAt(this._emPos[i * 3], this._emPos[i * 3 + 2])
+                        + 0.05) {
                     this._emLife[i] = 0;
                 }
             }
@@ -342,6 +358,9 @@ export class Explosions {
         velAttr.needsUpdate = true;
         dataAttr.needsUpdate = true;
         this.emberMesh.visible = emberLive > 0 && S.showExplosions !== false;
+        // This pass wrote the buffers; once it wrote them all-dead, the next
+        // idle frame takes the early-out above and stops uploading.
+        this._emberDirty = emberLive > 0;
 
         this.emberMaterial.uniforms.emberTime.value = this._time;
         this.material.uniforms.explosionGlow.value = S.explosionGlow ?? 1;

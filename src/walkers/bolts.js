@@ -69,7 +69,10 @@ const CRATER_RADIUS = 2.4;
 const CRATER_DEPTH = 0.72;
 const CRATER_BERM = 0.55;
 /** Grains thrown up. */
-const IMPACT_SPRAY = 260;
+// Grains per impact. Restrained on purpose: the shellburst's *fire* is the
+// event now, and a white wall of thrown snow taller than the fireball buries
+// the thing the eye came for.
+const IMPACT_SPRAY = 130;
 
 export class Bolts {
     /**

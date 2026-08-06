@@ -394,6 +394,7 @@ function deriveHead(asset, header) {
     const flags = new Uint8Array(bones);
     let pivotZ = Infinity, pivotY = 0;
     let noseZ = -Infinity, headTop = 0, headBottom = Infinity;
+    let noseBone = -1;
     let found = 0;
     // The hull's attitude reference: the heaviest bone riding high on the
     // machine — the AT-AT's head mass, the AT-ST's whole cabin. Not gated on
@@ -414,7 +415,7 @@ function deriveHead(asset, header) {
         flags[b] = 1;
         found++;
         if (z < pivotZ) { pivotZ = z; pivotY = y; }
-        if (z > noseZ) noseZ = z;
+        if (z > noseZ) { noseZ = z; noseBone = b; }
         if (y > headTop) headTop = y;
         if (y < headBottom) headBottom = y;
     }
@@ -500,6 +501,9 @@ function deriveHead(asset, header) {
             z: faceZ + 0.3,
             halfSpan: Math.min(1.3, Math.max(0.7, faceHalfW * 0.72)),
         },
+        // The bone the band rides — the frontmost of the head chain, so the
+        // slit moves with the face through the gait, not just with the look.
+        noseBone,
         poseBone,
     };
 }
@@ -996,13 +1000,12 @@ class Walker {
             return;
         }
 
-        // Hold fire while the hull is nodding down through its gait — the shot
-        // waits for the level part of the cycle rather than being lost. See
-        // `_levelLo` for the calibration; the mid-burst second barrel is
-        // exempt, because a pair split across two nods reads as two misses.
-        if (
-            herd.tune.levelGate() && herd.poseBone >= 0 && this._barrel % 2 === 0
-        ) {
+        // Hold fire unless the hull is riding the *top* of its nod — a bolt
+        // leaving a face that is pointed at the snow reads as a misfire, so
+        // every shot waits for the nose-up beat of the cycle. Both barrels:
+        // the old mid-burst exemption let the pair's second round fire into
+        // the ground, which is exactly the thing this gate exists to stop.
+        if (herd.tune.levelGate() && herd.poseBone >= 0) {
             const f = Math.floor(this.phase * herd.frameCount) % herd.frameCount;
             const fy = herd.anim[(f * herd.boneCount + herd.poseBone) * 12 + 7]
                 * herd.basisScale;
@@ -1267,8 +1270,40 @@ export class WalkerHerd {
             this.muzzles = [new Float32Array([0.16, rifleY, 0.5])];
             this.muzzleAim = new Float32Array([0.16, rifleY * 0.97, 40]);
         }
-        /** The viewport slit the red eye band lights, or null. */
-        this.eyeLocal = head.eye ?? null;
+        /**
+         * The viewport band's ends, in the *nose bone's bind space* — so the
+         * runtime carries them through the animated bone matrix exactly as it
+         * carries the face's own vertices, and the band rides the gait, the
+         * head-look and the world transform in one multiply. Computed by
+         * inverting the bone's frame-0 matrix (rotation + translation; the
+         * bake keeps the basis unit) against the standing-frame slit the
+         * deriver measured.
+         */
+        this.eyeBind = null;
+        if (head.eye && head.noseBone >= 0) {
+            const e = head.eye;
+            const o = head.noseBone * 12;
+            const bs = h.basisScale, ts = h.transScale;
+            const m = [];
+            for (let k = 0; k < 9; k++) m[k] = asset.anim[o + k] * bs;
+            const t = [
+                asset.anim[o + 9] * ts, asset.anim[o + 10] * ts, asset.anim[o + 11] * ts,
+            ];
+            const toBind = (x, y, z) => {
+                const dx = x - t[0], dy = y - t[1], dz = z - t[2];
+                // Orthonormal basis: the inverse rotation is the transpose.
+                return new Float32Array([
+                    m[0] * dx + m[1] * dy + m[2] * dz,
+                    m[3] * dx + m[4] * dy + m[5] * dz,
+                    m[6] * dx + m[7] * dy + m[8] * dz,
+                ]);
+            };
+            this.eyeBind = {
+                bone: head.noseBone,
+                a: toBind(-e.halfSpan, e.y, e.z),
+                b: toBind(e.halfSpan, e.y, e.z),
+            };
+        }
 
         // The level gate's calibration: the hull bone's forward-axis pitch,
         // scanned over the whole cycle. Firing is allowed in the top part of
@@ -1284,7 +1319,8 @@ export class WalkerHerd {
                 if (fy < lo) lo = fy;
                 if (fy > hi) hi = fy;
             }
-            this._levelLo = lo + (hi - lo) * 0.6;
+            // Top quarter of the nod only: level-to-up, never down.
+            this._levelLo = lo + (hi - lo) * 0.75;
         }
         /**
          * The bolts every walker in the herd fires, in one pool and one draw.
@@ -1626,17 +1662,31 @@ export class WalkerHerd {
      * @param {import("../vfx/eyeBands.js").EyeBands} bands
      */
     collectEyes(bands) {
-        const e = this.eyeLocal;
+        const e = this.eyeBind;
         if (!e || !this._visible) return;
+        // Through the same per-frame bone matrices the skin texture carries —
+        // the staging array still holds this frame's values, so the band lands
+        // exactly where the face's vertices did: gait rock, head look and
+        // world transform all in the one multiply.
+        const d = this._texData;
+        const bones = this.boneCount;
+        const bone = e.bone;
         for (let i = 0; i < Math.min(this.count, this.walkers.length); i++) {
-            const w = this.walkers[i];
-            _eyeLocal[0] = -e.halfSpan;
-            _eyeLocal[1] = e.y;
-            _eyeLocal[2] = e.z;
-            w._muzzleWorld(_eyeLocal, _tmp);
-            _eyeLocal[0] = e.halfSpan;
-            w._muzzleWorld(_eyeLocal, _tmp2);
-            bands.add(_tmp.x, _tmp.y, _tmp.z, _tmp2.x, _tmp2.y, _tmp2.z);
+            const row0 = i * 4;
+            const o0 = ((row0) * bones + bone) * 4;
+            const o1 = ((row0 + 1) * bones + bone) * 4;
+            const o2 = ((row0 + 2) * bones + bone) * 4;
+            const o3 = ((row0 + 3) * bones + bone) * 4;
+            const px = (p) =>
+                d[o0] * p[0] + d[o1] * p[1] + d[o2] * p[2] + d[o3];
+            const py = (p) =>
+                d[o0 + 1] * p[0] + d[o1 + 1] * p[1] + d[o2 + 1] * p[2] + d[o3 + 1];
+            const pz = (p) =>
+                d[o0 + 2] * p[0] + d[o1 + 2] * p[1] + d[o2 + 2] * p[2] + d[o3 + 2];
+            bands.add(
+                px(e.a), py(e.a), pz(e.a),
+                px(e.b), py(e.b), pz(e.b)
+            );
         }
     }
 
