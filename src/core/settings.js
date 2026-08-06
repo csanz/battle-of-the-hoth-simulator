@@ -319,7 +319,10 @@ export const S = {
      * fade out (`snowContact.js`) and the path flattens off the dunes
      * (`controller.js` cruise blend).
      */
-    speederClimbMax: 6.0,
+    // The E ladder's ceiling (rung 3); rung 2 sits at 0.45x of it. Raised
+    // from the old single-latch 6 m — one cruise height read as "too low",
+    // and the top rung should stand well clear of the dune crests.
+    speederClimbMax: 18.0,
     /**
      * How eagerly it climbs (and, at 0.6x, settles back). Exponential rate per
      * second: 2.2 reaches ~90% of the ceiling in about a second.
@@ -419,7 +422,7 @@ export const S = {
      */
     showAtst: true,
     /** How many scouts. Live, like `walkerCount`; same `MAX_WALKERS` cap. */
-    atstCount: 3,
+    atstCount: 5,
     /** Multiplier on the canonical 8.6 m hull. */
     atstScale: 1.0,
     /**
@@ -493,7 +496,7 @@ export const S = {
      * voice; a wind loop you can pick out of the mix while doing nineteen metres a
      * second is already too loud.
      */
-    ambienceVolume: 0.22,
+    ambienceVolume: 0.14,
     /**
      * The score's level. The two files are loudness-matched to each other in
      * the manifest — see the `music` entry's measured EBU R 128 gain — so

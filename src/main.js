@@ -20,6 +20,7 @@ import { CharacterController } from "./character/controller.js";
 import { Character } from "./character/character.js";
 import { SnowContact } from "./character/snowContact.js";
 import { SprayField } from "./vfx/particles.js";
+import { Explosions } from "./vfx/explosion.js";
 import { MuzzleMarkers } from "./vfx/muzzleMarkers.js";
 import { EyeBands } from "./vfx/eyeBands.js";
 import { SurfWake } from "./vfx/surfWake.js";
@@ -42,6 +43,7 @@ import { audio } from "./audio/engine.js";
 import { Soundscape } from "./audio/soundscape.js";
 import { createSoundButton } from "./ui/soundButton.js";
 import { createTouchControls } from "./ui/touchControls.js";
+import { createIntroFilm } from "./ui/introFilm.js";
 import { OPENING, applyOpening, installShotCapture } from "./core/openingShot.js";
 
 // ------------------------------------------------------- module-scope scratch
@@ -69,6 +71,15 @@ async function boot() {
     // runs underneath all of it and is, on any warm cache, long finished by the
     // time anything asks. Not awaited here on purpose; see "loading audio" below.
     const audioReady = audio.load();
+    // The intro transmission rides the same reasoning: a megabyte of video
+    // fetched to a blob underneath the GPU work, so the boot gate's click
+    // plays local bytes instantly. Stub-tolerant — a miss costs the film,
+    // not the boot, and the audio-only line takes over.
+    const introFilm = createIntroFilm([
+        "video/luke-intro.mp4",
+        "https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4",
+    ]);
+    const filmReady = introFilm.preload();
     // Same reasoning for the walkers: 4.4 MB of geometry, three levels of detail
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
@@ -162,9 +173,34 @@ async function boot() {
     // shape of asset everything else here is: one mesh, one transform texture,
     // five pipelines, three levels of detail. See `tools/bakeWalker.mjs`.
     await loading.phase("landing the walkers", 0.70);
-    const walkers = new WalkerHerd(gfx, terrain, sky, shadows, await walkerReady, rig);
+    const walkers = new WalkerHerd(gfx, terrain, sky, shadows, await walkerReady, rig, {
+        // The centre machine — where the eye lands first — steps well back,
+        // so the opening line reads as an advance in depth rather than three
+        // hulls crowding the middle of the frame.
+        depthStagger: (i) => [0, 110, 40][i % 3],
+    });
     onChange("showWalker", (v) => walkers.setVisible(v));
     walkers.registerPrepass(depthPass);
+
+    // The second wave: two more AT-ATs deep behind the line — reinforcements
+    // already on the march when the game opens. Same asset, same machinery,
+    // their own herd so the opening line's count slider and composition stay
+    // untouched; every shared look slider (scale, speed, bolts) still reads
+    // through. Spawned at 600 m — under RECYCLE (640), or they would be
+    // re-placed the moment they landed — so they stand half-dissolved in the
+    // aerial haze and resolve as they come, well clear of the scouts' band.
+    const walkers2 = new WalkerHerd(gfx, terrain, sky, shadows, await walkerReady, rig, {
+        count: () => 2,
+        maxCount: () => 2,
+        spawnDistance: () => 600,
+        respawnDistance: () => 600,
+        // A pair at 600 m on the stock spread stands nearly shoulder to
+        // shoulder over the first wave's centre — doubled, they straddle the
+        // line as wide wings instead.
+        spreadScale: () => 2.0,
+    });
+    onChange("showWalker", (v) => walkers2.setVisible(v));
+    walkers2.registerPrepass(depthPass);
 
     // The AT-ST escort: scouts on the same machinery, tuned to their own
     // sliders and spawned deeper than the AT-AT line (200-260 m), so they
@@ -212,7 +248,13 @@ async function boot() {
                 width: 0.55 * s, reach: 420 * s, speed: 1.1,
             };
         },
-        spawnDistance: () => 500,
+        // The scouts' own band: behind the first wave's deepest machine
+        // (490 m) and in front of the second wave (600 m) — never under
+        // either. 515 + the default stagger tops out at 575, and a recycled
+        // scout re-enters the same band rather than the old 470 default,
+        // which would put it back under the first wave's centre.
+        spawnDistance: () => 515,
+        respawnDistance: () => 515,
         // The default separation is thirty metres at walker scale; scouts
         // stand nearer each other than mechs twelve times their mass.
         separation: () => 30 * Math.max(0.4, /** @type {number} */ (S.atstScale)),
@@ -239,7 +281,17 @@ async function boot() {
         },
         snow: () => 0.15,
         visible: () => S.showAtst !== false,
-        fire: () => false,
+        // The squads return fire: little carbine bolts, close range only —
+        // the player has to be down among them before the lasers come up.
+        // Deliberately absent from the soundscape: fifteen carbines popping
+        // would bury the mix, and silent tracer reads fine at this scale.
+        fire: () => S.walkerFire !== false,
+        fireRange: () => 150,
+        muzzle: () => ({ span: 0, y: 0, z: 0 }),
+        bolt: () => ({
+            r: 1.0, g: 0.16, b: 0.1,
+            width: 0.13, reach: 170, speed: 1.4,
+        }),
         headLook: () => false,
         separation: () => 2.2,
         sink: () => 0.12,
@@ -271,6 +323,14 @@ async function boot() {
 
     // Airborne snow: footfall kick now, the surf plume and spell spray later.
     const spray = new SprayField(gfx, terrain, sky, shadows);
+    // Shellbursts where the cannon fire lands close to the fight — the Hoth
+    // fireball, gated and rationed. See `vfx/explosion.js` for the economy.
+    const explosions = new Explosions(gfx, terrain, sky, [
+        { herd: walkers, radius: 16 },
+        { herd: walkers2, radius: 16 },
+        { herd: atsts, radius: 10 },
+        { herd: troopers, radius: 7 },
+    ]);
     // Tuning rings on the gun heads, live under the overlay's muzzle sliders.
     const muzzleMarkers = new MuzzleMarkers(gfx);
     muzzleMarkers.bindCamera(rig.camera.viewProjection);
@@ -354,12 +414,64 @@ async function boot() {
         if (w.craft?.bolts) w.craft.bolts.ctx.onImpact = squadImpact;
     }
     if (speeder?.bolts) speeder.bolts.ctx.onImpact = squadImpact;
+    // The same impacts, one more listener: a qualifying burst sometimes
+    // blossoms into a fireball. Chained over whatever handler is installed
+    // rather than replacing it — the crater, the spray and the flinching
+    // squad all still belong to the bolts and the handler above.
+    const chainBurst = (bolts, anywhere) => {
+        if (!bolts) return;
+        const prev = bolts.ctx.onImpact;
+        bolts.ctx.onImpact = (x, y, z) => {
+            prev?.(x, y, z);
+            explosions.impact(x, y, z, anywhere);
+        };
+    };
+    for (const w of wingmen) chainBurst(w.craft?.bolts, false);
+    // The player's own guns blossom wherever they land — a deliberate shot
+    // into the snow that does nothing reads as a misfire.
+    chainBurst(speeder?.bolts, true);
+    // And the AT-ATs' artillery: their shells land around the *player*, far
+    // from anything the proximity gate watches, so they ride the same
+    // always-blossom path — incoming fire that bursts into flame is most of
+    // what makes the walk toward the line feel like a bombardment. The
+    // AT-STs' slim chin guns stay a kick of snow; a scout is not artillery.
+    chainBurst(walkers.bolts, true);
+    chainBurst(walkers2.bolts, true);
+
+    // A low pass is its own kind of near miss: the craft screaming over at
+    // deck height sends the squad diving without a shot fired — same dives,
+    // same get-up as the shellburst. Keyed off the hull's actual lift and
+    // way: up at the clean rungs the lift is saturated and nobody flinches,
+    // and a craft hovering alongside is a curiosity, not a threat. The
+    // `oneshot` guard is what keeps a lingering pass from re-triggering a
+    // trooper who is already in the snow.
+    const buzzTroopers = () => {
+        if (!speeder || S.speeder !== true) return;
+        if (character.lift01 > 0.45 || character.speed < 9) return;
+        const n = Math.min(troopers.count, troopers.walkers.length);
+        for (let i = 0; i < n; i++) {
+            const w = troopers.walkers[i];
+            if (w.oneshot) continue;
+            const d = Math.hypot(
+                w.position.x - character.position.x,
+                w.position.z - character.position.z
+            );
+            if (d > 8) continue;
+            const rightward =
+                (character.position.x - w.position.x) * Math.cos(w.yaw)
+                - (character.position.z - w.position.z) * Math.sin(w.yaw);
+            w.react(rightward > 0 ? "jumpLeft" : "jumpRight", {
+                then: { name: "gettingUp", startAt: GETUP_SKIP },
+            });
+        }
+    };
     speeder?.setVisible(true);
     showFigure();
 
     // The walkers' cannons throw snow into the same pool everything else does —
     // and the escort's, whose slimmer bolts kick up proportionally less of it.
     walkers.setSpray(spray);
+    walkers2.setSpray(spray);
     atsts.setSpray(spray);
 
     // A trooper's footfall: the same boot print and heel-scoop kick the player
@@ -421,6 +533,8 @@ async function boot() {
     // built rather than being enumerated once here.
     walkers.onMaterial = (m) => spells.addConsumers(m);
     for (const w of walkers.walkers) spells.addConsumers(w.material);
+    walkers2.onMaterial = (m) => spells.addConsumers(m);
+    for (const w of walkers2.walkers) spells.addConsumers(w.material);
     atsts.onMaterial = (m) => spells.addConsumers(m);
     for (const w of atsts.walkers) spells.addConsumers(w.material);
     troopers.onMaterial = (m) => spells.addConsumers(m);
@@ -448,8 +562,14 @@ async function boot() {
         // last ship starts 160 m back at 32 m/s. The run loop counts this
         // down, freezing movement input (the look stays free) and seeding
         // the craft's forward way the moment the hold releases.
-        const lukeEnd = 0.5 + (audio.buffers.get("lukeIntro")?.duration ?? 3.5);
-        introHold = Math.max(5.4, lukeEnd);
+        // The voice is the film's when the film made it down, the mp3's when
+        // it didn't — whichever is actually going to play. The film's voice
+        // starts late by design: an open hold for the fly-in, then the static
+        // tune-in, then Luke — `leadIn` is that whole runway.
+        const lead = introFilm.ok ? introFilm.leadIn : 0.5;
+        const voice = introFilm.duration
+            ?? audio.buffers.get("lukeIntro")?.duration ?? 3.5;
+        introHold = Math.max(5.4, lead + voice + 0.4);
         if (!wingmen.length || !walkers.count) return;
         let bx = 0, bz = 0;
         const n = Math.min(walkers.count, walkers.walkers.length);
@@ -460,6 +580,23 @@ async function boot() {
         bx /= n;
         bz /= n;
         for (const w of wingmen) w.flyover(character.position, bx, bz);
+        // The player's own entrance: their craft staged 150 m back along the
+        // formation's bearing, making way toward the spot the boot pinned.
+        // Flown by feeding the controller's velocity each frame (the intro
+        // block in the run loop), so the presentation, the camera and the
+        // snow all read a genuinely moving craft rather than a teleport.
+        if (S.speeder === true) {
+            const h = Math.atan2(
+                bx - character.position.x, bz - character.position.z
+            );
+            introFly = {
+                toX: character.position.x, toZ: character.position.z,
+                heading: h,
+            };
+            character.position.x -= Math.sin(h) * 150;
+            character.position.z -= Math.cos(h) * 150;
+            character.facing = h;
+        }
     };
 
     const post = new PostChain(gfx, rig, depthPass, sky);
@@ -525,6 +662,8 @@ async function boot() {
     await figure.warmUp();
     walkers.sync(rig.camera.position);
     await walkers.warmUp();
+    walkers2.sync(rig.camera.position);
+    await walkers2.warmUp();
     atsts.sync(rig.camera.position);
     await atsts.warmUp();
     troopers.sync(rig.camera.position);
@@ -539,6 +678,7 @@ async function boot() {
     for (const w of wingmen) await w.warmUp();
     spray.update(0, rig.camera.position);
     await spray.warmUp();
+    await explosions.warmUp();
     await wake.warmUp();
     await spells.warmUp(
         character.position.x + 3, character.position.y, character.position.z + 3
@@ -567,6 +707,12 @@ async function boot() {
     let time = 0;
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
+    /**
+     * The player's fly-in, or null once they have arrived — set by
+     * `startFlyover` alongside the escorts' own staging.
+     * @type {{toX:number, toZ:number, heading:number}|null}
+     */
+    let introFly = null;
 
     gfx.renderer.setAnimationLoop(() => {
         const now = performance.now();
@@ -596,6 +742,25 @@ async function boot() {
                 const f = character.facing;
                 character.velocity.set(Math.sin(f) * 16, 0, Math.cos(f) * 16);
             }
+            // The player's entrance: velocity fed straight into the
+            // controller, which integrates, terrain-snaps and banks exactly
+            // as it does under a stick. The approach slows as it closes, so
+            // arrival hands over a craft settling in rather than slamming to
+            // a stop — and the hold's own release seeds the forward way.
+            if (introFly) {
+                const fdx = introFly.toX - character.position.x;
+                const fdz = introFly.toZ - character.position.z;
+                const remaining = Math.hypot(fdx, fdz);
+                if (remaining < 4 || introHold <= 0) {
+                    introFly = null;
+                } else {
+                    const v = Math.min(34, Math.max(12, remaining * 0.45));
+                    const h = introFly.heading;
+                    character.velocity.set(
+                        Math.sin(h) * v, 0, Math.cos(h) * v
+                    );
+                }
+            }
         }
 
         // Per-system CPU timing. There is no dependable GPU timer in WebGL2, so
@@ -613,8 +778,10 @@ async function boot() {
         // after the controller has moved. Here, so their cost lands in the same
         // row of the overlay as the rest of the scene's inhabitants.
         walkers.update(dt, character.position);
+        walkers2.update(dt, character.position);
         atsts.update(dt, character.position);
         troopers.update(dt, character.position);
+        buzzTroopers();
         speeder?.tick(dt);
         speeder?.update(dt);
         for (const w of wingmen) {
@@ -654,6 +821,7 @@ async function boot() {
         // Also picks each walker's level of detail, which needs this frame's
         // camera and this frame's field of view.
         walkers.sync(rig.camera.position);
+        walkers2.sync(rig.camera.position);
         atsts.sync(rig.camera.position);
         troopers.sync(rig.camera.position);
         speeder?.sync(rig.camera.position);
@@ -664,17 +832,20 @@ async function boot() {
         muzzleMarkers.begin();
         if (S.showMuzzles) {
             walkers?.collectMuzzles?.(muzzleMarkers);
+            walkers2?.collectMuzzles?.(muzzleMarkers);
             speeder?.collectMuzzles?.(muzzleMarkers);
         }
         muzzleMarkers.commit(rig.camera.position);
         // The walkers' eyes, after the herd has settled this frame's heads.
         eyeBands.begin();
         walkers.collectEyes(eyeBands);
+        walkers2.collectEyes(eyeBands);
         eyeBands.commit(rig.camera.position);
         // Before the spray: the wake decides where its own lip is, and the
         // grains it sheds have to be in the pool before the pool is uploaded.
         wake.update(dt, rig.camera.position);
         spray.update(dt, rig.camera.position);
+        explosions.update(dt, rig.camera.position);
         const tVfx = performance.now();
 
         // Last, and a pure reader: every signal it mixes on — surf blend, carve
@@ -701,6 +872,7 @@ async function boot() {
             (speeder ? speeder.triangles : 0) +
             wingmen.reduce((t, w) => t + w.triangles, 0) +
             walkers.triangles +
+            walkers2.triangles +
             atsts.triangles +
             troopers.triangles +
             (wake.mesh && wake.mesh.visible ? wake.mesh.metadata.triangles : 0) +
@@ -720,6 +892,7 @@ async function boot() {
     // device existed. This phase only shows up on a cold cache or a slow line.
     await loading.phase("loading audio", 0.96);
     await audioReady;
+    await filmReady;
 
     // One click to enter, and that click is also the gesture that makes sound
     // legal. `unlock()` is issued from inside the handler — hence the callback —
@@ -736,9 +909,13 @@ async function boot() {
     if (unlocking) {
         await unlocking;
         soundscape.start();
-        // Luke, over the fading boot screen — a beat after the click so the
-        // context is warm and the line lands clean.
-        audio.play("lukeIntro", { delay: 0.5 });
+        // Luke, over the fading boot screen. The transmission square carries
+        // its own voice track, so when the film made it down, the standalone
+        // line stays quiet — doubling the voice is worse than either alone.
+        // The film falls back to it only if it can't play with sound.
+        if (!introFilm.ok) {
+            audio.play("lukeIntro", { delay: 0.5 });
+        }
     }
     soundButton.sync();
 
@@ -746,6 +923,9 @@ async function boot() {
     // stage the formation behind them, so the escorts thunder overhead in the
     // first seconds of the game rather than at some point during the loading.
     startFlyover();
+    // The transmission square, on the same gesture. Ends (or is clicked away)
+    // on its own; nothing waits on it.
+    introFilm.play(() => audio.play("lukeIntro", { delay: 0.3 }));
 
     // After the loading screen has gone: it sits at a higher z-index than the
     // overlay, so opening the panel before this would hide it behind a full
@@ -756,7 +936,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, troopers, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers, explosions,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,

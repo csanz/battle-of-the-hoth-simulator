@@ -30,7 +30,12 @@ export const input = {
     surf: false, // space or RMB held — the snow-surf slide
     fire: false, // the same two, when the player is flying rather than surfing
     sprint: false, // shift
-    rise: false, // E latch — the speeder's cruise altitude; nothing on foot
+    /**
+     * E altitude ladder, flying only: 1 rides the deck with the snow effects
+     * on, 2 and 3 climb clean above them. E steps up and wraps back to the
+     * deck. Starts at the top rung — the game opens at altitude.
+     */
+    riseLevel: 3,
 
     // The throttle flight scheme (`S.flightThrottle`), all three inert in the
     // classic scheme and on foot — see pollInput.
@@ -155,12 +160,15 @@ export function initInput(canvas, hooks) {
             if (!e.repeat) onToggleFps?.();
             return;
         }
-        // E is a latch, not a hold: tap to transition up to cruise altitude,
-        // tap again to settle back to the deck. The controller eases both ways.
-        // Under the throttle scheme W/S own the vertical instead, and E falls
-        // through to the held keys as the reheat.
+        // E is a ladder, not a hold: each tap steps the craft up a rung —
+        // deck, mid, high — and wraps back to the deck past the top. The
+        // controller eases every transition both ways. Under the throttle
+        // scheme W/S own the vertical instead, and E falls through to the
+        // held keys as the reheat.
         if (e.code === "KeyE" && S.flightThrottle !== true) {
-            if (!e.repeat) input.rise = !input.rise;
+            if (!e.repeat) {
+                input.riseLevel = input.riseLevel >= 3 ? 1 : input.riseLevel + 1;
+            }
             return;
         }
         // Space is the slide. Swallowed here so it cannot also scroll the page or

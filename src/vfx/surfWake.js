@@ -320,8 +320,11 @@ export class SurfWake {
 
         // Below a walking pace there is nothing being displaced, and laying
         // samples anyway leaves a knot of overlapping wall wherever the player
-        // coasted to a stop.
-        const active = ch.surf > 0.06 && ch.speed > 1.6;
+        // coasted to a stop. Up at altitude there is nothing being displaced
+        // either — the craft has left the snow, so the trench goes with the
+        // downwash (`lift01` is the same signal snowContact fades on).
+        const air = 1 - Math.min(1, Math.max(0, ch.lift01 || 0));
+        const active = ch.surf > 0.06 && ch.speed > 1.6 && air > 0.02;
 
         if (active) {
             if (!this._active) this._maybeRestart();
@@ -374,8 +377,12 @@ export class SurfWake {
         this._travel[i] = this._odo;
         this._laid[i] = this._clock;
         // Speed sets how much snow there is to throw; the surf blend eases the
-        // whole thing in and out so entering and leaving are never a switch.
-        this._strength[i] = ch.surf * clamp01((ch.speed - 2.2) / 9.0);
+        // whole thing in and out so entering and leaving are never a switch —
+        // and the lift fades it the same way on the way up, so the last
+        // samples laid before the craft leaves the deck taper instead of
+        // ending in a full-strength cliff.
+        this._strength[i] = ch.surf * clamp01((ch.speed - 2.2) / 9.0)
+            * (1 - Math.min(1, Math.max(0, ch.lift01 || 0)));
         this._carve[i] = ch.carve;
 
         if (this._count === 0) {

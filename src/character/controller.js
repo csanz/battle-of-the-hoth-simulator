@@ -34,6 +34,12 @@ const WALK_ACCEL = 26;
 const WALK_DECEL = 30;
 
 const SURF_MAX = 19.5;
+/**
+ * The E ladder's mid rung, as a fraction of `speederClimbMax` — rung 3 is the
+ * full ceiling. Also where the lift saturates: at and above this height the
+ * craft is clean of every ground effect.
+ */
+const CLIMB_MID = 0.45;
 const SURF_THRUST = 11.0;
 /**
  * Throttle scheme only: the open throttle cruises this much beyond the
@@ -148,7 +154,10 @@ export class CharacterController {
          * `S.speederClimbMax`, so "higher but not too high" is the shape of the
          * curve rather than a ceiling it bangs into.
          */
-        this._climb = 0;
+        // The game opens at the ladder's top rung (see `input.riseLevel`):
+        // seeded here so the craft *starts* at altitude rather than spending
+        // its first seconds climbing off the deck.
+        this._climb = S.speeder !== false ? Math.max(0, S.speederClimbMax || 0) : 0;
         /** Throttle scheme: where the vertical keys have flown the craft to. */
         this._climbWant = 0;
         /** The vertical keys, slewed (~80 ms) so the climb engages as a ramp. */
@@ -221,7 +230,7 @@ export class CharacterController {
             // target so nothing jumps, and clear the classic latch.
             this._wasThrottle = throttleMode;
             this._climbWant = this._climb;
-            input.rise = false;
+            input.riseLevel = 1;
         }
         const climbRate = Math.max(0.1, S.speederClimbRate || 2.2);
         const prevClimb = this._climb;
@@ -240,13 +249,22 @@ export class CharacterController {
             liftDenom = ceiling;
         } else {
             const climbMax = Math.max(0, S.speederClimbMax || 0);
-            const wantUp = flyingNow && input.rise ? climbMax : 0;
+            // Three rungs on the E ladder: the deck ride, a mid cruise, and
+            // the top. Each is genuinely higher than the last; E steps up and
+            // wraps (see input.riseLevel).
+            const level = Math.max(1, Math.min(3, input.riseLevel | 0));
+            const wantUp = flyingNow
+                ? [0, 0, CLIMB_MID, 1][level] * climbMax : 0;
             this._climb = expDamp(
-                this._climb, wantUp, wantUp > 0 ? climbRate : climbRate * 0.6, h
+                this._climb, wantUp,
+                wantUp > this._climb ? climbRate : climbRate * 0.6, h
             );
             this._climbWant = this._climb;
             this._vertEase = 0;
-            liftDenom = climbMax;
+            // Lift saturates at the mid rung: the deck keeps its trench,
+            // downwash and spray, and rungs 2 and 3 both fly fully clean of
+            // the snow rather than trailing a faded version of it.
+            liftDenom = climbMax * CLIMB_MID;
         }
         this.climbRate = h > 1e-6 ? (this._climb - prevClimb) / h : 0;
         this.lift01 = liftDenom > 1e-6 ? Math.min(1, this._climb / liftDenom) : 0;

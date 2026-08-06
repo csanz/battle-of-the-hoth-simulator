@@ -79,9 +79,9 @@ const SPAWN_SPREAD = 46;
 /** How far of the way to the sun the herd sits. See the note in `place`. */
 const SUN_REACH = 0.62;
 const SUN_BIAS = 0.5;
-const SPREAD = 0.30;
+const SPREAD = 0.34;
 /** Ceiling on the spread, radians, so a very wide window does not scatter them. */
-const SPREAD_MAX = 0.30;
+const SPREAD_MAX = 0.34;
 
 /** How many footfalls per cycle the gait detector will report. See `deriveFootfalls`. */
 const MAX_FOOTFALLS = 4;
@@ -174,6 +174,21 @@ const DEFAULT_TUNE = {
     /** Metres out along the spawn bearing. See `SPAWN_DISTANCE`. */
     spawnDistance: () => SPAWN_DISTANCE,
     /**
+     * Extra metres of depth per machine, on top of the spawn distance — the
+     * unevenness that makes a line read as a group rather than a rank. A herd
+     * can override it to pull one machine well back, or to keep its own band
+     * clear of another herd marching the same field.
+     * @param {number} i the machine's index
+     */
+    depthStagger: (i) => (i % 3) * 30,
+    /**
+     * Multiplier on the angular spread between machines. 1 is the tuned
+     * opening-line spacing; a herd standing deeper can take more, since the
+     * same angle covers more metres out there and a pair placed at depth on
+     * the stock spread stands nearly shoulder to shoulder.
+     */
+    spreadScale: () => 1,
+    /**
      * Hard ceiling on this herd, sizing its shared transform texture at build
      * time. `MAX_WALKERS` suits machines; infantry comes in larger numbers.
      */
@@ -198,6 +213,13 @@ const DEFAULT_TUNE = {
      * @type {null | ((index: number) => {x:number, z:number}|null)}
      */
     anchor: null,
+    /**
+     * Metres inside which this herd opens fire, or null for the default
+     * (`FIRE_RANGE` scaled by the herd's own scale). Infantry carbines carry
+     * nothing like an AT-AT's cannon, so a squad wants its own, shorter gate.
+     * @type {null | (() => number)}
+     */
+    fireRange: null,
     /**
      * Where a *recycled* machine re-enters, metres from the player. Deliberately
      * much deeper than the opening line: the first placement is a composition,
@@ -954,6 +976,8 @@ class Walker {
     _fire(dt) {
         const herd = this.herd;
         if (!herd.muzzles || !herd.tune.fire()) return;
+        // The dead and the diving don't return fire.
+        if (this.oneshot) return;
 
         this._fireTimer -= dt;
         if (this._fireTimer > 0) return;
@@ -962,7 +986,10 @@ class Walker {
         const dist = target
             ? Math.hypot(target.x - this.position.x, target.z - this.position.z)
             : Infinity;
-        if (dist > FIRE_RANGE * herd.tune.scale()) {
+        const range = herd.tune.fireRange
+            ? herd.tune.fireRange()
+            : FIRE_RANGE * herd.tune.scale();
+        if (dist > range) {
             // Out of range: check again shortly rather than banking a burst that
             // would fire the instant it closed.
             this._fireTimer = 0.6;
@@ -1231,6 +1258,15 @@ export class WalkerHerd {
         this.headHeight = head.height;
         this.muzzles = head.muzzles;
         this.muzzleAim = head.aim;
+        // An infantry rig has no derivable gun head — the deriver's forward-
+        // and-high gate never matches a helmet over a torso. A firing herd
+        // without muzzles shoots from the rifle instead: chest height, on the
+        // carry side, straight down the heading.
+        if (!this.muzzles && this.tune.fire()) {
+            const rifleY = this.height * 0.72;
+            this.muzzles = [new Float32Array([0.16, rifleY, 0.5])];
+            this.muzzleAim = new Float32Array([0.16, rifleY * 0.97, 40]);
+        }
         /** The viewport slit the red eye band lights, or null. */
         this.eyeLocal = head.eye ?? null;
 
@@ -1471,7 +1507,8 @@ export class WalkerHerd {
             // frame, which is the picture — backlit, not swallowed.
             const want = toSun * SUN_REACH;
             const bias = Math.max(-halfH * SUN_BIAS, Math.min(halfH * SUN_BIAS, want));
-            const spread = Math.min(SPREAD_MAX, halfH * SPREAD);
+            const spread = Math.min(SPREAD_MAX, halfH * SPREAD)
+                * this.tune.spreadScale();
             // Straddle the bias rather than starting on it: the first machine
             // sitting exactly on the sun's bearing is the one that disappears
             // into the glare, which is the whole thing this layout is avoiding.
@@ -1495,8 +1532,11 @@ export class WalkerHerd {
         // watched appearing — clamped inside `RECYCLE`, or the stagger could
         // land it past the boundary and it would be re-placed every frame.
         const depth = first
-            ? this.tune.spawnDistance() + (i % 3) * 30
-            : Math.min(this.tune.respawnDistance() + (i % 3) * 30, RECYCLE - 25);
+            ? this.tune.spawnDistance() + this.tune.depthStagger(i)
+            : Math.min(
+                this.tune.respawnDistance() + this.tune.depthStagger(i),
+                RECYCLE - 25
+            );
         const tx = target ? target.x : 0;
         const tz = target ? target.z : 0;
 

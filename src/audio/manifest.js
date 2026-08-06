@@ -204,7 +204,7 @@ export const AUDIO_MANIFEST = {
         needs: "speeder",
         bus: "sfx",
         loop: true,
-        gain: 0.9,
+        gain: 0.62,
         trim: 0.06,
     },
 

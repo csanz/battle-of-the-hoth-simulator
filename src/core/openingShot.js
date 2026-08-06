@@ -79,9 +79,14 @@ export function applyOpening(shot, rig, character, herd, terrain) {
         // The craft's heading, not just its parking spot — a speeder start
         // aimed at nothing is half a shot.
         if (shot.player.facing !== undefined) character.facing = shot.player.facing;
-        // The E-latch: a shot captured at cruise altitude should *open* at
-        // cruise altitude, latch held, not sink to the deck on frame one.
-        if (shot.player.rise !== undefined) input.rise = !!shot.player.rise;
+        // The E ladder: a shot captured at altitude should *open* at that
+        // altitude, rung held, not sink to the deck on frame one. Old pins
+        // saved the boolean latch; new ones save the rung.
+        if (shot.player.rise !== undefined) {
+            input.riseLevel = typeof shot.player.rise === "number"
+                ? Math.max(1, Math.min(3, shot.player.rise))
+                : (shot.player.rise ? 3 : 1);
+        }
         if (shot.player.climb !== undefined && character._climb !== undefined) {
             character._climb = shot.player.climb;
             character.climb = shot.player.climb;
@@ -130,7 +135,7 @@ export function captureOpening(rig, character, herd) {
         `    camera: { yaw: ${n(rig.yaw)}, pitch: ${n(rig.pitch)}, ` +
             `distance: ${n(rig.distanceTarget)} },`,
         `    player: { x: ${n(character.position.x)}, z: ${n(character.position.z)}, ` +
-            `facing: ${n(character.facing)}, rise: ${!!input.rise}, ` +
+            `facing: ${n(character.facing)}, rise: ${input.riseLevel}, ` +
             `climb: ${n(character.climb || 0)} },`,
         "    walkers: [",
         ...walkers.map(
