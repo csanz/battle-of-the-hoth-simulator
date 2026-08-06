@@ -289,36 +289,75 @@ async function boot() {
         : null;
     speeder?.registerPrepass(depthPass);
 
-    // ------------------------------------------------------------ the wingman
-    // An AI T-47 in the fight — same presentation, different pilot. Handed the
-    // trooper herd too: most of its strafing runs go after the squads.
-    const wingman = WINGMAN
-        ? new Wingman(
-            gfx, terrain, sky, shadows, await speederReady,
-            walkers, spray, character, troopers
-        )
-        : null;
-    wingman?.registerPrepass(depthPass);
-
-    // Where the wingman's bolts land, the infantry reacts: anyone standing
-    // within a few metres of the burst takes it — mostly a flinch, sometimes
-    // the fall. The dead lie in the snow a while, then the herd recycles them
-    // back in at their squad's station like any other re-entry.
-    if (wingman?.craft?.bolts) {
-        wingman.craft.bolts.ctx.onImpact = (x, _y, z) => {
-            const n = Math.min(troopers.count, troopers.walkers.length);
-            for (let i = 0; i < n; i++) {
-                const w = troopers.walkers[i];
-                if (w.oneshot) continue;
-                if (Math.hypot(w.position.x - x, w.position.z - z) > 4.5) continue;
-                if (Math.random() < 0.25) {
-                    w.react("Dying", { hold: true, linger: 10 });
-                } else {
-                    w.react("Hit Reaction");
-                }
-            }
-        };
+    // ------------------------------------------------------------ the flight
+    // Three AI T-47s in the fight — same presentation, different pilots. Each
+    // seat flies its own bearings (seeded a third of a turn apart, orbits
+    // alternating direction) and has its own appetite: one hunts the armour,
+    // one flies a mixed bag, and one never leaves the trooper squads alone.
+    /** @type {Wingman[]} */
+    const wingmen = [];
+    if (WINGMAN) {
+        const speederAsset = await speederReady;
+        const seats = [
+            { trooperChance: 0.2 },  // the armour hunter
+            { trooperChance: 0.6 },  // flies whatever the field offers
+            { trooperChance: 1.0 },  // the infantry specialist
+        ];
+        for (let i = 0; i < seats.length; i++) {
+            const w = new Wingman(
+                gfx, terrain, sky, shadows, speederAsset,
+                walkers, spray, character, troopers,
+                { ...seats[i], seat: i }
+            );
+            w.registerPrepass(depthPass);
+            wingmen.push(w);
+        }
     }
+    const wingman = wingmen[0] ?? null;
+
+    // Where a cannon bolt lands, the infantry reacts — the player's guns and
+    // the wingman's both report through the same handler. Three rings around
+    // the burst:
+    //
+    //   < 1.7 m   a hit. One of the three deaths, held on its final frame; the
+    //             body lies in the snow a while, then the herd recycles it
+    //             back in at its squad's station like any other re-entry.
+    //   < 6 m     a near miss. The trooper dives *away from* the burst —
+    //             jumpLeft for an impact on his right, jumpRight for his
+    //             left — then the get-up, then the walk again.
+    //   < 9 m     close enough to flinch.
+    //
+    // The get-up starts five and a half seconds in: Mixamo's clip spends its
+    // first act lying still and rolling over, and a soldier who dove clear of
+    // a shellburst stirs and rises rather than napping through the battle.
+    const GETUP_SKIP = 5.5;
+    const DEATHS = ["death1", "death2", "death3"];
+    const squadImpact = (x, _y, z) => {
+        const n = Math.min(troopers.count, troopers.walkers.length);
+        for (let i = 0; i < n; i++) {
+            const w = troopers.walkers[i];
+            const d = Math.hypot(w.position.x - x, w.position.z - z);
+            if (d > 9) continue;
+            if (d < 1.7) {
+                w.react(DEATHS[(Math.random() * DEATHS.length) | 0], {
+                    hold: true, linger: 12,
+                });
+            } else if (d < 6) {
+                // Which side the burst is on, in the trooper's own frame.
+                const rightward = (x - w.position.x) * Math.cos(w.yaw)
+                    - (z - w.position.z) * Math.sin(w.yaw);
+                w.react(rightward > 0 ? "jumpLeft" : "jumpRight", {
+                    then: { name: "gettingUp", startAt: GETUP_SKIP },
+                });
+            } else {
+                w.react("hitReaction");
+            }
+        }
+    };
+    for (const w of wingmen) {
+        if (w.craft?.bolts) w.craft.bolts.ctx.onImpact = squadImpact;
+    }
+    if (speeder?.bolts) speeder.bolts.ctx.onImpact = squadImpact;
     speeder?.setVisible(true);
     showFigure();
 
@@ -400,6 +439,25 @@ async function boot() {
     // wherever the default rule put things.
     applyOpening(OPENING, rig, character, walkers, terrain);
 
+    // The flight's entrance: the three escorts restaged behind the player at
+    // altitude and speed, aimed at the centre of the walker line — the game
+    // opens with the formation sweeping overhead toward the battle. Called on
+    // the boot gate's click rather than here: the simulation runs behind the
+    // boot screen, and a flyover staged now would be long gone before the
+    // player ever saw the field.
+    const startFlyover = () => {
+        if (!wingmen.length || !walkers.count) return;
+        let bx = 0, bz = 0;
+        const n = Math.min(walkers.count, walkers.walkers.length);
+        for (let i = 0; i < n; i++) {
+            bx += walkers.walkers[i].position.x;
+            bz += walkers.walkers[i].position.z;
+        }
+        bx /= n;
+        bz /= n;
+        for (const w of wingmen) w.flyover(character.position, bx, bz);
+    };
+
     const post = new PostChain(gfx, rig, depthPass, sky);
 
     // ------------------------------------------------------------ the frame
@@ -474,7 +532,7 @@ async function boot() {
         speeder?.sync(rig.camera.position);
         await speeder.warmUp();
     }
-    if (wingman) await wingman.warmUp();
+    for (const w of wingmen) await w.warmUp();
     spray.update(0, rig.camera.position);
     await spray.warmUp();
     await wake.warmUp();
@@ -533,8 +591,10 @@ async function boot() {
         troopers.update(dt, character.position);
         speeder?.tick(dt);
         speeder?.update(dt);
-        wingman?.tick(dt);
-        wingman?.update(dt);
+        for (const w of wingmen) {
+            w.tick(dt);
+            w.update(dt);
+        }
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
@@ -571,7 +631,7 @@ async function boot() {
         atsts.sync(rig.camera.position);
         troopers.sync(rig.camera.position);
         speeder?.sync(rig.camera.position);
-        wingman?.sync(rig.camera.position);
+        for (const w of wingmen) w.sync(rig.camera.position);
         // The fleet holds formation on the player; three matrix writes.
         destroyers.update(character.position, rig.camera.position);
         // The tuning rings, after every transform they pin to has settled.
@@ -609,7 +669,7 @@ async function boot() {
             (terrain.mesh && terrain.mesh.metadata ? terrain.mesh.metadata.triangles : 0) +
             (S.showCharacter && !FLYING ? figure.triangles : 0) +
             (speeder ? speeder.triangles : 0) +
-            (wingman ? wingman.triangles : 0) +
+            wingmen.reduce((t, w) => t + w.triangles, 0) +
             walkers.triangles +
             atsts.triangles +
             troopers.triangles +
@@ -652,6 +712,11 @@ async function boot() {
     }
     soundButton.sync();
 
+    // The instant the player is coming in — boot screen starting its fade —
+    // stage the formation behind them, so the escorts thunder overhead in the
+    // first seconds of the game rather than at some point during the loading.
+    startFlyover();
+
     // After the loading screen has gone: it sits at a higher z-index than the
     // overlay, so opening the panel before this would hide it behind a full
     // screen of boot gradient.
@@ -661,11 +726,13 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, troopers, speeder, wingman, contact, spray, wake, spells, destroyers,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, atsts, troopers, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,
         captureShot,
+        /** Fake a cannon burst at (x, z) — for testing the squad's reactions. */
+        squadImpact: (x, z) => squadImpact(x, 0, z),
         /**
          * Print the speeder's look settings as a paste-able block.
          *

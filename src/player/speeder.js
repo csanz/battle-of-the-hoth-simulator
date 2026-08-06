@@ -47,8 +47,10 @@ const HOVER = 2.6;
 const HOVER_SPEED_LIFT = 1.5;
 /** How hard it banks into a turn, radians at full lean. */
 const BANK = 0.62;
-/** Nose-down under power, radians at full throttle. */
-const PITCH = 0.16;
+/** Nose-down under power, radians at full throttle. A lean, not a dive:
+ *  at speed the craft flies close to level — which is also what keeps the
+ *  cannon fire parallel to the field instead of ploughing it. */
+const PITCH = 0.06;
 /** Throttle scheme: radians of nose along the vertical at full climb/dive
  *  rate — up climbing, down diving, the pitch answer to the steer's bank. */
 const VERT_PITCH = 0.34;
@@ -546,12 +548,18 @@ export class Speeder {
         // the dive so W visibly points the craft at the snow. The wingman's
         // pilot publishes no climbRate and the classic scheme keeps its old
         // attitude exactly.
+        //
+        // Sign convention, hard-won: in `_compose`, *positive* pitch is nose
+        // DOWN (fwd.y = -sin(pitch)). The power term below subtracted — which
+        // flew every craft nose-UP nine degrees at speed, and since the guns
+        // fire along the hull axis, sprayed the cannon fire over everything's
+        // head. Positive under power, as the header always claimed.
         const vr = S.flightThrottle === true
             ? Math.max(-1, Math.min(1, (c.climbRate ?? 0) / 7)) : 0;
         const wantPitch =
-            -Math.min(1, Math.abs(along) / 19) * PITCH * Math.sign(along || 1)
+            Math.min(1, Math.abs(along) / 19) * PITCH * Math.sign(along || 1)
             + slope * 0.3
-            + vr * VERT_PITCH * (vr < 0 ? 1.25 : 1);
+            - vr * VERT_PITCH * (vr < 0 ? 1.25 : 1);
 
         if (!this._settled) {
             this.position.set(c.position.x, wantY, c.position.z);

@@ -101,11 +101,18 @@ class SimPilot {
      * @param {{x:number, z:number}} anchor the player, for the patrol fallback
      * @param {import("../walkers/walker.js").WalkerHerd|null} [troopers]
      *   the infantry the strafing runs mostly go after
+     * @param {{trooperChance?: number, seat?: number}} [opts] this pilot's
+     *   character: how often a pass hunts infantry, and which slot of the
+     *   flight it flies — the seat seeds the run bearing and the orbit
+     *   direction, so three ships never fly the same racetrack.
      */
-    constructor(terrain, walkers, anchor, troopers) {
+    constructor(terrain, walkers, anchor, troopers, opts) {
         this.terrain = terrain;
         this.walkers = walkers;
         this.troopers = troopers ?? null;
+        this._trooperChance = opts?.trooperChance ?? TROOPER_PASS_CHANCE;
+        this._seat = opts?.seat ?? 0;
+        this._orbitDir = this._seat % 2 === 0 ? 1 : -1;
         /** Whether the current pass hunts infantry. Rolled per pass. */
         this._hitTroopers = false;
         this.anchor = anchor;
@@ -131,7 +138,10 @@ class SimPilot {
         this._phaseT = 0;
         this._speedTarget = SPEED_REPO;
         this._steer = 0;
-        this._runBearing = Math.random() * Math.PI * 2;
+        // Seats fan the opening bearings a third of a turn apart, so the
+        // flight's first passes cross the field on three different lines.
+        this._runBearing = this._seat * (Math.PI * 2 / 3)
+            + Math.random() * Math.PI * 2 / 3;
         this._runPoint = new THREE.Vector3();
         this._breakDir = 1;
         this._climbWant = 0;
@@ -223,9 +233,10 @@ class SimPilot {
 
     /** A fresh start point for the next pass: wide, low, new axis. */
     _pickRunPoint() {
-        // Roll what the pass goes after: mostly the infantry — that is where
-        // the drama is — falling back to armour when no squad is standing.
-        this._hitTroopers = Math.random() < TROOPER_PASS_CHANCE;
+        // Roll what the pass goes after — each pilot has its own appetite for
+        // infantry; the specialist's chance is 1 and it never leaves the
+        // squads alone. Falls back to armour when no squad is standing.
+        this._hitTroopers = Math.random() < this._trooperChance;
         this._lock = this._pickTarget();
         const t = this._lock;
         const cx = t ? t.position.x : this.anchor.x;
@@ -239,6 +250,47 @@ class SimPilot {
             0,
             cz + Math.cos(this._runBearing) * RUN_START
         );
+    }
+
+    /**
+     * The opening: start the flight behind the player, already at altitude
+     * and speed, aimed at the battle — so frame one has the escorts sweeping
+     * low overhead toward the walkers, in echelon, each on its own lane.
+     *
+     * @param {{x:number, z:number}} player where the camera is
+     * @param {number} bx battle centre x
+     * @param {number} bz battle centre z
+     */
+    flyover(player, bx, bz) {
+        const dx = bx - player.x, dz = bz - player.z;
+        const l = Math.hypot(dx, dz) || 1;
+        const nx = dx / l, nz = dz / l;
+        // Echelon: seat 0 dead over the camera, the others offset to either
+        // side and staggered back, so the formation reads in one glance.
+        const lane = (this._seat === 0 ? 0 : this._seat === 1 ? -1 : 1) * 26;
+        const back = 90 + this._seat * 35;
+        this.position.set(
+            player.x - nx * back - nz * lane, 0,
+            player.z - nz * back + nx * lane
+        );
+        this.facing = Math.atan2(dx, dz);
+        this.velocity.set(nx * SPEED_REPO, 0, nz * SPEED_REPO);
+        this.climb = 13;
+        this._climbWant = 12;
+        this._lift = 1;
+        this.groundY = this.terrain && this.terrain.heightAt
+            ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
+        this._cruiseGround = this.groundY;
+        this.position.y = this.groundY + 2.6 + this.climb;
+        // Straight into an approach on the battle: the run point is the
+        // battle centre, so the first pass is the flyover continuing on.
+        this._runPoint.set(bx, 0, bz);
+        this._runBearing = Math.atan2(this.position.x - bx, this.position.z - bz);
+        this._phase = "reposition";
+        this._phaseT = 0;
+        this._wantX = bx;
+        this._wantZ = bz;
+        this._blendT = 0;
     }
 
     /** @param {number} rawDt */
@@ -293,8 +345,8 @@ class SimPilot {
             const b = Math.atan2(
                 this.position.x - this.anchor.x, this.position.z - this.anchor.z
             );
-            wantX = this.anchor.x + Math.sin(b + ORBIT_AHEAD) * ORBIT_R;
-            wantZ = this.anchor.z + Math.cos(b + ORBIT_AHEAD) * ORBIT_R;
+            wantX = this.anchor.x + Math.sin(b + ORBIT_AHEAD * this._orbitDir) * ORBIT_R;
+            wantZ = this.anchor.z + Math.cos(b + ORBIT_AHEAD * this._orbitDir) * ORBIT_R;
             this._speedTarget = SPEED_REPO;
             this._climbWant = 12;
         } else if (this._phase === "reposition") {
@@ -466,13 +518,18 @@ export class Wingman {
     /**
      * Same signature spirit as the player's craft: everything the Speeder
      * presentation needs, plus the herds it is fighting and the player it
-     * falls back to orbiting.
+     * falls back to orbiting. `opts` is the pilot's character — see SimPilot.
      */
-    constructor(gfx, terrain, sky, shadows, asset, walkers, spray, player, troopers) {
+    constructor(gfx, terrain, sky, shadows, asset, walkers, spray, player, troopers, opts) {
         this.terrain = terrain;
-        this.pilot = new SimPilot(terrain, walkers, player.position, troopers);
+        this.pilot = new SimPilot(terrain, walkers, player.position, troopers, opts);
         this.craft = new Speeder(gfx, terrain, sky, shadows, asset, this.pilot, spray);
         this.craft.setVisible(true);
+    }
+
+    /** Start this ship on the opening flyover — see SimPilot.flyover. */
+    flyover(player, bx, bz) {
+        this.pilot.flyover(player, bx, bz);
     }
 
     get triangles() { return this.craft.triangles; }

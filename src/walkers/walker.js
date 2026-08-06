@@ -1373,6 +1373,9 @@ export class WalkerHerd {
         const side = (i % 2 === 0 ? 1 : -1) * Math.ceil(i / 2);
         const first = !walker._placed;
         walker._placed = true;
+        // A placement is a fresh machine: whatever it was doing — lying dead,
+        // mid-dive — did not come with it.
+        walker.oneshot = null;
 
         // An anchored machine belongs to something, not to the field: it enters
         // where its anchor says — beside an AT-ST, wherever that is right now —
