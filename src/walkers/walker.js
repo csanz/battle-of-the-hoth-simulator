@@ -67,7 +67,7 @@ export const MAX_WALKERS = 8;
  * across the line abreast. See the source for the measured reasoning: 200 m is
  * the second clear window over the dune crests on the opening bearings.
  */
-const SPAWN_DISTANCE = 200;
+const SPAWN_DISTANCE = 380;
 const SPAWN_SPREAD = 46;
 
 /**

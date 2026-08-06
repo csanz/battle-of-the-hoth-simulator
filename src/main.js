@@ -211,7 +211,7 @@ async function boot() {
                 width: 0.55 * s, reach: 420 * s, speed: 1.1,
             };
         },
-        spawnDistance: () => 268,
+        spawnDistance: () => 440,
         // The default separation is thirty metres at walker scale; scouts
         // stand nearer each other than mechs twelve times their mass.
         separation: () => 30 * Math.max(0.4, /** @type {number} */ (S.atstScale)),
@@ -446,6 +446,12 @@ async function boot() {
     // boot screen, and a flyover staged now would be long gone before the
     // player ever saw the field.
     const startFlyover = () => {
+        // The player arrives *with* the flight: already under way toward the
+        // battle rather than parked on the snow waiting for a keypress.
+        if (S.speeder === true) {
+            const f = character.facing;
+            character.velocity.set(Math.sin(f) * 16, 0, Math.cos(f) * 16);
+        }
         if (!wingmen.length || !walkers.count) return;
         let bx = 0, bz = 0;
         const n = Math.min(walkers.count, walkers.walkers.length);

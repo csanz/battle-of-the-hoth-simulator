@@ -40,9 +40,11 @@ import { input } from "./input.js";
 export const OPENING = {
     camera: { yaw: -0.072, pitch: 0.213, distance: 11 },
     player: { x: 42.543, z: 17.645, facing: 0.266, rise: true, climb: 6 },
+    // Deep — 400 m out, so reaching the line is a flight, not a hop. Same
+    // bearings as the original composition, just further down them.
     walkers: [
-        { x: 48.875, z: 170.187, yaw: -2.862, phase: 0.384 },
-        { x: 102.774, z: 179.76, yaw: -2.622, phase: 0.754 },
+        { x: 59.13, z: 417.3, yaw: -2.862, phase: 0.384 },
+        { x: 192.3, z: 420.78, yaw: -2.622, phase: 0.754 },
     ],
 };
 
