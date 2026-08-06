@@ -10,8 +10,6 @@ skimming metres over procedural snow while AT-AT walkers advance across the
 field, Imperial Star Destroyers hang on station high overhead, and an AI
 wingman runs passes beside you.
 
-**▶ Fly it now: [battle-of-the-hoth-simulator.vercel.app](https://battle-of-the-hoth-simulator.vercel.app/)**
-
 Source: <https://github.com/csanz/battle-of-the-hoth-simulator>
 
 ## The battle
@@ -36,8 +34,7 @@ the in-game overlay (backtick).
 
 ```
 npm install
-npm run dev        # the battle
-# /jet.html        # craft tuning page (overlay pre-opened)
+npm run dev
 ```
 
 Controls: **W** thrust · **S** brake / reverse · **A/D** steer ·
