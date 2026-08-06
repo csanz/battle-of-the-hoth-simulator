@@ -1,6 +1,6 @@
-# Battle of Hoth Simulator
-
 ![A T-47 snowspeeder banking low over the dunes, two AT-ATs on the horizon](docs/header.png)
+
+# Battle of Hoth Simulator
 
 A real-time, flyable recreation of the **Battle of Hoth** — the opening battle
 of *The Empire Strikes Back*. You are in the cockpit of a T-47 airspeeder,
