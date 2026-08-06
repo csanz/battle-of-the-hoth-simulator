@@ -211,7 +211,7 @@ async function boot() {
                 width: 0.55 * s, reach: 420 * s, speed: 1.1,
             };
         },
-        spawnDistance: () => 440,
+        spawnDistance: () => 500,
         // The default separation is thirty metres at walker scale; scouts
         // stand nearer each other than mechs twelve times their mass.
         separation: () => 30 * Math.max(0.4, /** @type {number} */ (S.atstScale)),
@@ -247,26 +247,18 @@ async function boot() {
             if (!n) return null;
             const host = atsts.walkers[Math.floor(i / 5) % n];
             const station = i % 5;
-            if (station >= 3) {
-                // The trailing pair: behind the hull along the scout's own
-                // heading, one off each shoulder, staggered in depth so they
-                // read as a file rather than a rank.
-                const back = host.yaw + Math.PI + (station === 3 ? -0.3 : 0.3);
-                const r = 11 + (station - 3) * 3;
-                return {
-                    x: host.position.x + Math.sin(back) * r,
-                    z: host.position.z + Math.cos(back) * r,
-                };
-            }
-            // Three stations around the hull — ahead-left, ahead-right, and
-            // trailing — pushed out past the feet, with a little per-squad
-            // twist so two escorts do not read as copies.
-            const angle = station * (Math.PI * 2 / 3)
-                + 0.55 + Math.floor(i / 5) * 0.9;
-            const r = 9 + station * 2.5;
+            // The whole squad marches *behind* its scout: infantry follows
+            // armour, it does not screen it. Five lanes fanned across the
+            // scout's six, staggered in depth so the squad reads as a loose
+            // wedge trailing the hull rather than a rank — with a little
+            // per-squad twist so two escorts do not read as copies.
+            const lane = station - 2; // -2..2 across the line of advance
+            const back = host.yaw + Math.PI
+                + lane * 0.26 + (Math.floor(i / 5) % 3 - 1) * 0.12;
+            const r = 10 + Math.abs(lane) * 2.5 + (station % 2) * 3;
             return {
-                x: host.position.x + Math.sin(angle) * r,
-                z: host.position.z + Math.cos(angle) * r,
+                x: host.position.x + Math.sin(back) * r,
+                z: host.position.z + Math.cos(back) * r,
             };
         },
     });
@@ -446,12 +438,14 @@ async function boot() {
     // boot screen, and a flyover staged now would be long gone before the
     // player ever saw the field.
     const startFlyover = () => {
-        // The player arrives *with* the flight: already under way toward the
-        // battle rather than parked on the snow waiting for a keypress.
-        if (S.speeder === true) {
-            const f = character.facing;
-            character.velocity.set(Math.sin(f) * 16, 0, Math.cos(f) * 16);
-        }
+        // The opening beat: hold the player's stick until the escorts have
+        // passed overhead and Luke's line has landed. Sized off the actual
+        // clip and the actual formation timing rather than guessed — the
+        // last ship starts 160 m back at 32 m/s. The run loop counts this
+        // down, freezing movement input (the look stays free) and seeding
+        // the craft's forward way the moment the hold releases.
+        const lukeEnd = 0.5 + (audio.buffers.get("lukeIntro")?.duration ?? 3.5);
+        introHold = Math.max(5.4, lukeEnd);
         if (!wingmen.length || !walkers.count) return;
         let bx = 0, bz = 0;
         const n = Math.min(walkers.count, walkers.walkers.length);
@@ -567,6 +561,8 @@ async function boot() {
     // ------------------------------------------------------------- run loop
     let prev = performance.now();
     let time = 0;
+    /** Seconds of opening hold left — set by `startFlyover`, counted here. */
+    let introHold = 0;
 
     gfx.renderer.setAnimationLoop(() => {
         const now = performance.now();
@@ -577,6 +573,26 @@ async function boot() {
         time += dt;
 
         pollInput();
+
+        // The opening hold: escorts overhead, Luke on the wire, stick frozen.
+        // Movement only — the mouse still looks around, which is the point of
+        // an entrance. Releases with the craft already making way, so control
+        // arrives mid-flight rather than from a standstill.
+        if (introHold > 0) {
+            introHold -= dt;
+            input.moveX = 0;
+            input.moveZ = 0;
+            input.moving = false;
+            input.sprint = false;
+            input.thrust = false;
+            input.boost = false;
+            input.vert = 0;
+            input.fire = false;
+            if (introHold <= 0 && S.speeder === true) {
+                const f = character.facing;
+                character.velocity.set(Math.sin(f) * 16, 0, Math.cos(f) * 16);
+            }
+        }
 
         // Per-system CPU timing. There is no dependable GPU timer in WebGL2, so
         // the overlay's GPU row shows its dash and these rows stay `cpu`.

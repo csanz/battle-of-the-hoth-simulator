@@ -372,7 +372,7 @@ export const S = {
      * surplus rather than tearing anything down — and capped by `MAX_WALKERS` in
      * `walkers/walker.js`, which is what sizes the shared transform texture.
      */
-    walkerCount: 2,
+    walkerCount: 3,
     /**
      * Multiplier on the model's own size. 1 is the canonical twenty-two and a
      * half metres, which is already twelve times the character.

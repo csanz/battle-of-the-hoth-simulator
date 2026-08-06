@@ -117,7 +117,7 @@ const FIRE_SPRAY = 0.055;
  * Well beyond the last shadow cascade, and past the distance the aerial
  * perspective has dissolved it into the sky.
  */
-const RECYCLE = 520;
+const RECYCLE = 640;
 
 /** How far one is allowed to wander from the field's centre. */
 const LEASH = 900;
