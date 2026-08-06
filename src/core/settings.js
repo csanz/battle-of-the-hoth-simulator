@@ -377,7 +377,7 @@ export const S = {
      * Multiplier on the model's own size. 1 is the canonical twenty-two and a
      * half metres, which is already twelve times the character.
      */
-    walkerScale: 1.0,
+    walkerScale: 1.3,
     /**
      * Multiplier on the gait. It drives the cycle rate and the ground speed
      * together — they come off one number in `walker.js` — so the feet stay
@@ -493,7 +493,7 @@ export const S = {
      * voice; a wind loop you can pick out of the mix while doing nineteen metres a
      * second is already too loud.
      */
-    ambienceVolume: 0.34,
+    ambienceVolume: 0.22,
     /**
      * The score's level. The two files are loudness-matched to each other in
      * the manifest — see the `music` entry's measured EBU R 128 gain — so
