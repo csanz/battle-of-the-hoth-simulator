@@ -6,7 +6,9 @@ A real-time, flyable recreation of the **Battle of Hoth** — the opening battle
 of *The Empire Strikes Back*. You are in the cockpit of a T-47 airspeeder,
 skimming metres over procedural snow while AT-AT walkers advance across the
 field, Imperial Star Destroyers hang on station high overhead, and an AI
-wingman — or a ghost of your own recorded flying — runs passes beside you.
+wingman runs passes beside you.
+
+**▶ Fly it now: [battle-of-the-hoth-simulator.vercel.app](https://battle-of-the-hoth-simulator.vercel.app/)**
 
 Source: <https://github.com/csanz/battle-of-the-hoth-simulator>
 
