@@ -341,10 +341,36 @@
     }
 
     #hint.show { opacity: 1; }
+
+    /* -------------------------------------------------- flight message */
+    /* The cockpit's one line to the pilot: "stand by" when the stick is
+       locked during the opening, "you have control" at the handover. */
+
+    #flightmsg {
+        position: fixed;
+        left: 50%;
+        bottom: 86px;
+        z-index: 50;
+        transform: translateX(-50%);
+        font-size: 11px;
+        letter-spacing: 0.34em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        color: rgba(255, 199, 148, 0.88);
+        text-shadow: 0 1px 14px rgba(0, 0, 0, 0.85);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 500ms ease;
+    }
+
+    #flightmsg.show { opacity: 1; }
+    #flightmsg.good { color: var(--frost); }
 </style>
 </head>
 <body>
     <canvas id="view" tabindex="0"></canvas>
+
+    <div id="flightmsg"></div>
 
     <div id="hint">click to look &nbsp;·&nbsp; W thrust &nbsp;·&nbsp; A/D steer &nbsp;·&nbsp; shift boost &nbsp;·&nbsp; E climb &nbsp;·&nbsp; space fire &nbsp;·&nbsp; ` settings</div>
 

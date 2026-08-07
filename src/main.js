@@ -954,6 +954,21 @@ async function boot() {
     let time = 0;
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
+    /**
+     * The cockpit's line to the pilot. Silent unless the player pushes the
+     * stick during the opening hold — then "stand by" says the lock is
+     * deliberate — and one "you have control" at the handover. `flightMsgT`
+     * is the seconds left before the line fades.
+     */
+    const flightMsg = document.getElementById("flightmsg");
+    let flightMsgT = 0;
+    const showFlightMsg = (text, seconds, good) => {
+        if (!flightMsg) return;
+        flightMsg.textContent = text;
+        flightMsg.classList.toggle("good", !!good);
+        flightMsg.classList.add("show");
+        flightMsgT = seconds;
+    };
     /** Cadence clock for the overlay's burn preview trail. */
     let burnPreviewT = 0;
     /**
@@ -985,6 +1000,13 @@ async function boot() {
         // arrives mid-flight rather than from a standstill.
         if (introHold > 0) {
             introHold -= dt;
+            // A push on the locked stick gets an answer, not silence: the
+            // "stand by" line holds while they keep asking and fades ~1.5 s
+            // after they stop.
+            if (input.moving || input.fire || input.sprint
+                || input.thrust || input.boost || input.vert !== 0) {
+                showFlightMsg("⟨ stand by — escort inbound ⟩", 1.5);
+            }
             input.moveX = 0;
             input.moveZ = 0;
             input.moving = false;
@@ -993,9 +1015,14 @@ async function boot() {
             input.boost = false;
             input.vert = 0;
             input.fire = false;
-            if (introHold <= 0 && S.speeder === true) {
-                const f = character.facing;
-                character.velocity.set(Math.sin(f) * 16, 0, Math.cos(f) * 16);
+            if (introHold <= 0) {
+                showFlightMsg("you have control", 2.6, true);
+                if (S.speeder === true) {
+                    const f = character.facing;
+                    character.velocity.set(
+                        Math.sin(f) * 16, 0, Math.cos(f) * 16
+                    );
+                }
             }
             // The player's entrance: velocity fed straight into the
             // controller, which integrates, terrain-snaps and banks exactly
@@ -1016,6 +1043,13 @@ async function boot() {
                     );
                 }
             }
+        }
+
+        // The flight message's clock, outside the hold: "you have control"
+        // fades after the lock is already gone.
+        if (flightMsgT > 0) {
+            flightMsgT -= dt;
+            if (flightMsgT <= 0 && flightMsg) flightMsg.classList.remove("show");
         }
 
         // Per-system CPU timing. There is no dependable GPU timer in WebGL2, so
