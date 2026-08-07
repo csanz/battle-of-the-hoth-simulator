@@ -171,9 +171,11 @@ class SimPilot {
 
         /** Going in: the floor stops holding and the craft settles into the
          *  snow. Set by the damage ladder's third hit; `crashed` latches for
-         *  one frame at ground contact, and `respawn` starts the seat over. */
+         *  one frame at ground contact, then the airframe lies as a burning
+         *  wreck for `_wreckT` seconds before `respawn` refills the seat. */
         this.downed = false;
         this.crashed = false;
+        this._wreckT = 0;
 
         this._pickRunPoint();
     }
@@ -330,6 +332,36 @@ class SimPilot {
     update(rawDt) {
         const dt = Math.min(rawDt || 0, 1 / 30);
         if (dt <= 0) return;
+
+        // The wreck: down in the snow, sliding to a stop, burning. The hull
+        // is drawn from terrain + hover + climb, so a negative climb is what
+        // actually grounds it. When the timer runs out the seat refills.
+        if (this._wreckT > 0) {
+            this._wreckT -= dt;
+            const skid = Math.max(0, 1 - dt * 2.2);
+            this.velocity.x *= skid;
+            this.velocity.z *= skid;
+            this.position.x += this.velocity.x * dt;
+            this.position.z += this.velocity.z * dt;
+            this.groundY = this.terrain && this.terrain.heightAt
+                ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
+            this.pathY = this.groundY;
+            this.lift01 = 0;
+            this.climb = expDamp(this.climb, -1.9, 3, dt);
+            this.position.y = this.groundY + 2.6 + this.climb;
+            const s = Math.hypot(this.velocity.x, this.velocity.z);
+            this.speed01 = Math.min(1, s / 19.5);
+            this.speedRaw = this.speed01;
+            this.driveHeld = false;
+            this.boostHeld = false;
+            this.fireHeld = false;
+            // Settled on one skid, slightly over: a wreck lies at an angle.
+            this.lean = expDamp(this.lean, 0.35, 2.0, dt);
+            this.steerRate = 0;
+            if (this._wreckT <= 0) this.respawn();
+            return;
+        }
+
         this._phaseT += dt;
 
         const target = this._target();
@@ -540,13 +572,19 @@ class SimPilot {
         this.pathY = base;
         if (this.downed) {
             // Power dying: the climb bleeds below the deck, the clearance
-            // floor stops holding, and ground contact latches the crash.
+            // floor stops holding, and ground contact latches the crash and
+            // starts the wreck clock — the airframe stays down, burning,
+            // before this seat's replacement flies in from deep.
             this._speedTarget = Math.min(this._speedTarget, 24);
             this.climb = expDamp(this.climb, -4, 0.9, dt);
             this.position.y = Math.max(
                 base + 2.6 + this.climb, this.groundY + 0.3
             );
-            if (this.position.y - this.groundY < 1.1) this.crashed = true;
+            if (this.position.y - this.groundY < 1.1) {
+                this.crashed = true;
+                this.downed = false;
+                this._wreckT = 13;
+            }
             return;
         }
         this.climb = expDamp(this.climb, this._climbWant, 2.4, dt);
@@ -582,6 +620,28 @@ export class Wingman {
         this.damage = 0;
         this._hitGrace = 0;
         this._puffT = 0;
+        /** The attrition clock — see `_updateDamage`. */
+        this._fateT = 9 + Math.random() * 9;
+        this._wasWreck = false;
+    }
+
+    /** One hit lands: step the ladder, buy the grace, flash the flame. */
+    _takeHit() {
+        const fx = this.effects;
+        const P = this.pilot;
+        this.damage++;
+        this._hitGrace = 4.5 + Math.random() * 3;
+        this._fateT = 8 + Math.random() * 10;
+        for (let k = 0; k < 5; k++) {
+            fx.smoke.emit(
+                P.position.x, P.position.y + 0.2, P.position.z,
+                (Math.random() - 0.5) * 6, 1 + Math.random() * 3,
+                (Math.random() - 0.5) * 6,
+                0.5, 1.2, 0.25 + Math.random() * 0.2,
+                2.8, 1.0, 0.28, 0.6, false
+            );
+        }
+        if (this.damage >= 3) P.downed = true;
     }
 
     /**
@@ -596,26 +656,28 @@ export class Wingman {
         const P = this.pilot;
         if (this._hitGrace > 0) this._hitGrace -= dt;
 
-        if (this.damage < 3 && this._hitGrace <= 0) {
+        const flying = !P.downed && P._wreckT <= 0;
+        if (this.damage < 3 && this._hitGrace <= 0 && flying) {
+            // A literal bolt through hull space always counts...
+            let hit = false;
             for (const pool of fx.enemy) {
-                if (!pool || !pool.hitTest(P.position.x, P.position.y, P.position.z, 3.4)) {
-                    continue;
+                if (pool && pool.hitTest(P.position.x, P.position.y, P.position.z, 3.4)) {
+                    hit = true;
+                    break;
                 }
-                this.damage++;
-                this._hitGrace = 4.5 + Math.random() * 3;
-                // The hit lands: one gout of flame off the hull.
-                for (let k = 0; k < 5; k++) {
-                    fx.smoke.emit(
-                        P.position.x, P.position.y + 0.2, P.position.z,
-                        (Math.random() - 0.5) * 6, 1 + Math.random() * 3,
-                        (Math.random() - 0.5) * 6,
-                        0.5, 1.2, 0.25 + Math.random() * 0.2,
-                        2.8, 1.0, 0.28, 0.6, false
-                    );
-                }
-                if (this.damage >= 3) P.downed = true;
-                break;
             }
+            // ...but the field's fire is aimed at the *player*, so literal
+            // intersections are rare. The attrition clock is what actually
+            // wears a craft down: seconds spent committed to runs through
+            // the guns, and eventually one connects. This is why the ships
+            // visibly smoke, burn and go in rather than flying charmed lives.
+            const inTheFire = P._phase === "approach"
+                || P._phase === "attack" || P._phase === "break";
+            if (!hit && inTheFire) {
+                this._fateT -= dt;
+                if (this._fateT <= 0) hit = true;
+            }
+            if (hit) this._takeHit();
         }
 
         // The trail: dark smoke from the first hit, fire licking with it
@@ -660,14 +722,21 @@ export class Wingman {
             }
         }
 
-        // Ground contact: the burst, the crater, and a fresh airframe for
-        // this seat brought in from deep.
+        // Ground contact: the burst, the crater, the sound — and then the
+        // airframe *stays*, a wreck in the snow shedding smoke and fire
+        // (damage holds at 2 so the trail keeps burning) until the pilot's
+        // wreck clock runs out and the seat's replacement flies in.
         if (P.crashed) {
+            P.crashed = false;
             fx.onCrash?.(P.position.x, P.position.y, P.position.z);
+            this.damage = 2;
+        }
+        if (this._wasWreck && P._wreckT <= 0) {
             this.damage = 0;
             this._hitGrace = 6;
-            P.respawn();
+            this._fateT = 9 + Math.random() * 9;
         }
+        this._wasWreck = P._wreckT > 0;
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */

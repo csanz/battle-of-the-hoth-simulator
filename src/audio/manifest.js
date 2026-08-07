@@ -199,6 +199,16 @@ export const AUDIO_MANIFEST = {
     // power. Natively looped rather than overlapped for exactly the reason the
     // board is: an overlap schedule is laid out in real seconds and cannot follow
     // a playback rate that changes every frame.
+    // A wingman going in. Fired from main's crash handler at the level and
+    // delay its distance earns, same physics as the cannon.
+    speederCrash: {
+        url: "audio/speeder-explosion.mp3",
+        bus: "sfx",
+        gain: 0.9,
+        minGap: 0.5,
+        needs: "showWingman",
+    },
+
     speederJet: {
         url: "audio/delta-jet.mp3",
         needs: "speeder",

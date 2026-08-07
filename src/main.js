@@ -477,6 +477,16 @@ async function boot() {
             enemy: enemyFire,
             onCrash: (x, y, z) => {
                 explosions.impact(x, y, z, true, true);
+                // The report, at the level and the delay its distance earns —
+                // the same physics the cannons obey.
+                const cd = Math.hypot(
+                    x - character.position.x, z - character.position.z
+                );
+                const cn = Math.max(0, 1 - cd / 420);
+                audio.play("speederCrash", {
+                    gain: cn * cn * cn,
+                    delay: Math.min(1.6, cd / 343),
+                });
                 terrain.deform.brush(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
                 for (let k = 0; k < 42; k++) {
                     const a = Math.random() * Math.PI * 2;
