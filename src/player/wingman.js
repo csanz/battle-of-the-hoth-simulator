@@ -169,6 +169,39 @@ class SimPilot {
         this._cruiseGround = NaN;
         this._lift = 0.4;
 
+        /** Going in: the floor stops holding and the craft settles into the
+         *  snow. Set by the damage ladder's third hit; `crashed` latches for
+         *  one frame at ground contact, and `respawn` starts the seat over. */
+        this.downed = false;
+        this.crashed = false;
+
+        this._pickRunPoint();
+    }
+
+    /** A fresh airframe for this seat, brought in from deep on a new bearing. */
+    respawn() {
+        this.downed = false;
+        this.crashed = false;
+        this._hitTroopers = Math.random() < this._trooperChance;
+        this._lock = this._pickTarget();
+        const cx = this._lock ? this._lock.position.x : this.anchor.x;
+        const cz = this._lock ? this._lock.position.z : this.anchor.z;
+        const b = Math.random() * Math.PI * 2;
+        this.position.set(cx + Math.sin(b) * 480, 0, cz + Math.cos(b) * 480);
+        this.facing = Math.atan2(cx - this.position.x, cz - this.position.z);
+        this.velocity.set(
+            Math.sin(this.facing) * SPEED_REPO, 0, Math.cos(this.facing) * SPEED_REPO
+        );
+        this.groundY = this.terrain && this.terrain.heightAt
+            ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
+        this._cruiseGround = this.groundY;
+        this.climb = 12;
+        this._climbWant = 12;
+        this._lift = 1;
+        this.position.y = this.groundY + 2.6 + this.climb;
+        this._phase = "reposition";
+        this._phaseT = 0;
+        this._blendT = 0;
         this._pickRunPoint();
     }
 
@@ -505,6 +538,17 @@ class SimPilot {
         this.lift01 = this._lift;
         const base = this.groundY + (this._cruiseGround - this.groundY) * this._lift;
         this.pathY = base;
+        if (this.downed) {
+            // Power dying: the climb bleeds below the deck, the clearance
+            // floor stops holding, and ground contact latches the crash.
+            this._speedTarget = Math.min(this._speedTarget, 24);
+            this.climb = expDamp(this.climb, -4, 0.9, dt);
+            this.position.y = Math.max(
+                base + 2.6 + this.climb, this.groundY + 0.3
+            );
+            if (this.position.y - this.groundY < 1.1) this.crashed = true;
+            return;
+        }
         this.climb = expDamp(this.climb, this._climbWant, 2.4, dt);
         // Floored against the raw ground so a man-height run over a dune the
         // smoothed line cut through still clears the crest.
@@ -525,6 +569,95 @@ export class Wingman {
         this.pilot = new SimPilot(terrain, walkers, player.position, troopers, opts);
         this.craft = new Speeder(gfx, terrain, sky, shadows, asset, this.pilot, spray);
         this.craft.setVisible(true);
+
+        /**
+         * The damage ladder: 0 clean, 1 black smoke, 2 fire, 3 going in.
+         * `effects` is wired by main — the smoke pool, the enemy bolt pools
+         * that can hit this craft, and the crash handler.
+         * @type {{ smoke: import("../vfx/smokeTrails.js").SmokeTrails,
+         *          enemy: (import("../walkers/bolts.js").Bolts|null)[],
+         *          onCrash?: (x:number,y:number,z:number) => void } | null}
+         */
+        this.effects = null;
+        this.damage = 0;
+        this._hitGrace = 0;
+        this._puffT = 0;
+    }
+
+    /**
+     * The ladder itself. A hit is a live enemy bolt passing within hull
+     * distance; each one steps the damage and buys a grace window, so the
+     * stages play out — smoke, then fire, then the third hit puts it in.
+     * @param {number} dt
+     */
+    _updateDamage(dt) {
+        const fx = this.effects;
+        if (!fx) return;
+        const P = this.pilot;
+        if (this._hitGrace > 0) this._hitGrace -= dt;
+
+        if (this.damage < 3 && this._hitGrace <= 0) {
+            for (const pool of fx.enemy) {
+                if (!pool || !pool.hitTest(P.position.x, P.position.y, P.position.z, 3.4)) {
+                    continue;
+                }
+                this.damage++;
+                this._hitGrace = 4.5 + Math.random() * 3;
+                // The hit lands: one gout of flame off the hull.
+                for (let k = 0; k < 5; k++) {
+                    fx.smoke.emit(
+                        P.position.x, P.position.y + 0.2, P.position.z,
+                        (Math.random() - 0.5) * 6, 1 + Math.random() * 3,
+                        (Math.random() - 0.5) * 6,
+                        0.5, 1.2, 0.25 + Math.random() * 0.2,
+                        2.8, 1.0, 0.28, 0.6, false
+                    );
+                }
+                if (this.damage >= 3) P.downed = true;
+                break;
+            }
+        }
+
+        // The trail: dark smoke from the first hit, fire licking with it
+        // from the second, both shed just behind the hull and left hanging
+        // in the air the craft has already flown out of.
+        if (this.damage > 0) {
+            this._puffT -= dt;
+            if (this._puffT <= 0) {
+                this._puffT = 0.055;
+                const v = P.velocity;
+                const bx = P.position.x - Math.sin(P.facing) * 2.2;
+                const by = P.position.y + 0.35;
+                const bz = P.position.z - Math.cos(P.facing) * 2.2;
+                const shade = this.damage >= 2 ? 0.045 : 0.09;
+                fx.smoke.emit(
+                    bx, by, bz,
+                    v.x * 0.22 + (Math.random() - 0.5) * 0.8,
+                    0.6 + Math.random() * 0.5,
+                    v.z * 0.22 + (Math.random() - 0.5) * 0.8,
+                    0.5 + Math.random() * 0.25, 1.7,
+                    1.5 + Math.random() * 0.7,
+                    shade, shade, shade, 0.55, true
+                );
+                if (this.damage >= 2) {
+                    fx.smoke.emit(
+                        bx, by - 0.2, bz,
+                        v.x * 0.5, 0.5, v.z * 0.5,
+                        0.38, 0.7, 0.24 + Math.random() * 0.14,
+                        2.6, 0.85, 0.22, 0.5, false
+                    );
+                }
+            }
+        }
+
+        // Ground contact: the burst, the crater, and a fresh airframe for
+        // this seat brought in from deep.
+        if (P.crashed) {
+            fx.onCrash?.(P.position.x, P.position.y, P.position.z);
+            this.damage = 0;
+            this._hitGrace = 6;
+            P.respawn();
+        }
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */
@@ -546,6 +679,7 @@ export class Wingman {
         this.craft.setVisible(on);
         if (!on) return;
         this.pilot.update(dt);
+        this._updateDamage(dt);
         this.craft.update(dt);
     }
 

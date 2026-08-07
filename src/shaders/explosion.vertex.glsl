@@ -24,6 +24,7 @@ out float vR;
 out float vT;
 out float vSeed;
 out float vTime;
+out float vSteps;
 
 void main() {
     int slot = int(position.x + 0.5);
@@ -40,6 +41,15 @@ void main() {
     vT = a.x;
     vSeed = a.y;
     vTime = a.z;
+
+    // March budget by distance. The fragment cost is steps x pixels, and the
+    // pixel count explodes as the burst nears the camera — a point-blank
+    // fireball covers the frame. Fewer, coarser steps up close cost nothing
+    // the eye would keep (the volume is sweeping past too fast to study) and
+    // halve the worst-case frame; at range the full count carries the detail
+    // the small quad actually shows.
+    float camD = distance(cameraPos, p.xyz);
+    vSteps = clamp(mix(18.0, 40.0, (camD - 12.0) / 60.0), 18.0, 40.0);
 
     // A camera-facing square generously past the volume bound (1.3 R), so the
     // lobes the density noise pushes outside the unit sphere never clip.

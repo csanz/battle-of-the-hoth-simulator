@@ -453,9 +453,13 @@ function deriveHead(asset, header) {
             + anim[o + 11] * ts;
         if (pz > faceZ) faceZ = pz;
     }
-    // And the slit's width: how far the plating reaches sideways near that
-    // front, so the band spans the face it is lighting.
+    // And the slit's width — how far the plating reaches sideways near that
+    // front — plus *which bone owns the plating*: the band must ride the bone
+    // that actually drives the face surface, not whichever head-chain bone's
+    // centroid happens to sit furthest forward (a gun mount jiggles on its
+    // own and drags anything pinned to it around the face).
     let faceHalfW = 0;
+    const faceVerts = new Float64Array(bones);
     for (let v = 0; v < n; v++) {
         let best = 0, bw = -1;
         for (let k = 0; k < 4; k++) {
@@ -471,10 +475,16 @@ function deriveHead(asset, header) {
         const pz = (anim[o + 2] * x + anim[o + 5] * y + anim[o + 8] * z) * bs
             + anim[o + 11] * ts;
         if (pz < faceZ - 0.7) continue;
+        faceVerts[best]++;
         const px = (anim[o] * x + anim[o + 3] * y + anim[o + 6] * z) * bs
             + anim[o + 9] * ts;
         const ax = Math.abs(px);
         if (ax > faceHalfW) faceHalfW = ax;
+    }
+    let eyeBone = noseBone;
+    let eyeVerts = 0;
+    for (let b = 0; b < bones; b++) {
+        if (faceVerts[b] > eyeVerts) { eyeVerts = faceVerts[b]; eyeBone = b; }
     }
 
     const chinY = headBottom + (headTop - headBottom) * 0.18;
@@ -501,9 +511,9 @@ function deriveHead(asset, header) {
             z: faceZ + 0.3,
             halfSpan: Math.min(1.3, Math.max(0.7, faceHalfW * 0.72)),
         },
-        // The bone the band rides — the frontmost of the head chain, so the
-        // slit moves with the face through the gait, not just with the look.
-        noseBone,
+        // The bone the band rides: the one that dominates the measured face
+        // plating, so the slit is pinned to the exact surface it sits on.
+        noseBone: eyeBone,
         poseBone,
     };
 }

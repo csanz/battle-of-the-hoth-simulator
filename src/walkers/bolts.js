@@ -271,6 +271,38 @@ export class Bolts {
     }
 
     /**
+     * Does any live bolt pass within `r` metres of a point this frame?
+     *
+     * The craft-damage query: each bolt's current position is its origin plus
+     * its direction times how far it has flown (reach over flight life, the
+     * same speed the ribbon is drawn travelling). A bolt that connects is
+     * spent — its ribbon dies at the hull instead of flying on through it.
+     *
+     * @param {number} x @param {number} y @param {number} z
+     * @param {number} r metres
+     * @returns {boolean}
+     */
+    hitTest(x, y, z, r) {
+        const k = this._lookNow();
+        const v = Math.max(1e-3, k.reach) / k.lifeSec;
+        const r2 = r * r;
+        for (let i = 0; i < POOL; i++) {
+            if (this._life[i] <= 0) continue;
+            const t = (this._lifeMax[i] - this._life[i]) * v;
+            const a = i * 4, b = (POOL + i) * 4;
+            const dx = this._data[a] + this._data[b] * t - x;
+            const dy = this._data[a + 1] + this._data[b + 1] * t - y;
+            const dz = this._data[a + 2] + this._data[b + 2] * t - z;
+            if (dx * dx + dy * dy + dz * dz < r2) {
+                this._life[i] = Math.min(this._life[i], 0.05);
+                this._hitIn[i] = -1;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * March the terrain for the first crossing, then bisect onto it.
      * @param {{reach:number, speed:number}} k this owner's look, from `_lookNow`
      * @returns {number} seconds until the bolt gets there, or -1 if it never does

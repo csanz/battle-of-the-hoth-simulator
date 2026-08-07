@@ -216,9 +216,11 @@ export class Explosions {
      *   misfire, so the player's impacts always blossom; the cooldown alone
      *   keeps a held trigger from becoming a wall of orange.
      */
-    impact(x, y, z, anywhere = false) {
+    impact(x, y, z, anywhere = false, force = false) {
         if (S.showExplosions === false) return;
-        if (this._cooldown > 0) return;
+        // `force` is for events, not fire: a crashing airframe detonates
+        // whatever the ration says.
+        if (this._cooldown > 0 && !force) return;
         if (!anywhere) {
             let close = false;
             for (const n of this._near) {

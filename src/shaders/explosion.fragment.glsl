@@ -30,6 +30,7 @@ in float vR;
 in float vT;
 in float vSeed;
 in float vTime;
+in float vSteps;
 
 uniform vec3 cameraPos;
 uniform vec3 sunDir;
@@ -94,9 +95,12 @@ void main() {
     float heat = exp(-vT * 2.4);
     vec4 acc = vec4(0.0);
 
+    // Distance-scaled budget from the vertex stage; STEPS is the ceiling.
+    int steps = int(vSteps + 0.5);
     for (int i = 0; i < STEPS; i++) {
+        if (i >= steps) break;
         if (acc.a > 0.985) break;
-        float ft = t0 + span * (float(i) + jit) / float(STEPS);
+        float ft = t0 + span * (float(i) + jit) / float(steps);
         vec3 p = ro + rd * ft;
         float den = density(p, vT);
         if (den < 0.005) continue;
@@ -115,7 +119,7 @@ void main() {
                        smoothstep(0.55, 1.0, vT));
         vec3 smoke = alb * (SUNCOL * 0.5 * facing + SKYAMB);
 
-        float a = clamp(den * (5.2 / float(STEPS)), 0.0, 1.0);
+        float a = clamp(den * (5.2 / float(steps)), 0.0, 1.0);
         acc.rgb += (emis + smoke) * a * (1.0 - acc.a);
         acc.a += a * (1.0 - acc.a);
     }

@@ -24,6 +24,7 @@ import { SprayField } from "./vfx/particles.js";
 import { Explosions } from "./vfx/explosion.js";
 import { MuzzleMarkers } from "./vfx/muzzleMarkers.js";
 import { EyeBands } from "./vfx/eyeBands.js";
+import { SmokeTrails } from "./vfx/smokeTrails.js";
 import { SurfWake } from "./vfx/surfWake.js";
 import { SpellSystem } from "./spells/spellSystem.js";
 import { WalkerHerd } from "./walkers/walker.js";
@@ -316,10 +317,27 @@ async function boot() {
             const back = host.yaw + Math.PI
                 + lane * 0.26 + (Math.floor(i / 5) % 3 - 1) * 0.12;
             const r = 10 + Math.abs(lane) * 2.5 + (station % 2) * 3;
-            return {
+            const p = {
                 x: host.position.x + Math.sin(back) * r,
                 z: host.position.z + Math.cos(back) * r,
             };
+            // Never under the walkers: a station that lands inside an
+            // AT-AT's footprint radius is pushed straight out of it.
+            for (const herd of [walkers, walkers2]) {
+                const wn = Math.min(herd.count, herd.walkers.length);
+                for (let k = 0; k < wn; k++) {
+                    const W = herd.walkers[k];
+                    const dx = p.x - W.position.x;
+                    const dz = p.z - W.position.z;
+                    const d = Math.hypot(dx, dz);
+                    const min = 26 * /** @type {number} */ (S.walkerScale);
+                    if (d < min && d > 1e-3) {
+                        p.x = W.position.x + (dx / d) * min;
+                        p.z = W.position.z + (dz / d) * min;
+                    }
+                }
+            }
+            return p;
         },
     });
     troopers.registerPrepass(depthPass);
@@ -344,6 +362,9 @@ async function boot() {
     // The walkers' red viewport bands — content, not tooling, so always on.
     const eyeBands = new EyeBands(gfx);
     eyeBands.bindCamera(rig.camera.viewProjection);
+    // Damage smoke and fire off wounded craft — the wingmen's ladder.
+    const smoke = new SmokeTrails(gfx);
+    smoke.bindCamera(rig.camera.viewProjection);
 
     // ------------------------------------------------------------ the speeder
     /** @type {Speeder|null} */
@@ -444,6 +465,32 @@ async function boot() {
     // AT-STs' slim chin guns stay a kick of snow; a scout is not artillery.
     chainBurst(walkers.bolts, true);
     chainBurst(walkers2.bolts, true);
+
+    // The wingmen can be shot down — by the *Imperial* guns only. Three hits,
+    // spaced by a grace window so the stages play out: black smoke, then fire,
+    // then the third puts it into the snow — fireball, crater, a heavy kick of
+    // thrown snow, and a fresh airframe brought in from deep for that seat.
+    const enemyFire = [walkers.bolts, walkers2.bolts, atsts.bolts, troopers.bolts];
+    for (const w of wingmen) {
+        w.effects = {
+            smoke,
+            enemy: enemyFire,
+            onCrash: (x, y, z) => {
+                explosions.impact(x, y, z, true, true);
+                terrain.deform.brush(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
+                for (let k = 0; k < 42; k++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const out = 3 + Math.random() * 9;
+                    spray.emit(
+                        x + Math.cos(a) * 0.5, y + 0.2, z + Math.sin(a) * 0.5,
+                        Math.cos(a) * out, 4 + Math.random() * 9, Math.sin(a) * out,
+                        0.05 + Math.random() * 0.08, 0.8 + Math.random() * 1.2,
+                        Math.random() < 0.4 ? 1 : 0, 1.2
+                    );
+                }
+            },
+        };
+    }
 
     // A low pass is its own kind of near miss: the craft screaming over at
     // deck height sends the squad diving without a shot fired — same dives,
@@ -789,6 +836,30 @@ async function boot() {
         atsts.update(dt, character.position);
         troopers.update(dt, character.position);
         buzzTroopers();
+        // The infantry gives way: a soldier has no business under a walker's
+        // feet, so anyone drifting inside a hull's footprint is eased straight
+        // out of it — sideways pressure, not a teleport, so the walk survives.
+        {
+            const tn = Math.min(troopers.count, troopers.walkers.length);
+            for (const herd of [walkers, walkers2]) {
+                const wn = Math.min(herd.count, herd.walkers.length);
+                for (let i = 0; i < tn; i++) {
+                    const t = troopers.walkers[i];
+                    for (let k = 0; k < wn; k++) {
+                        const W = herd.walkers[k];
+                        const dx = t.position.x - W.position.x;
+                        const dz = t.position.z - W.position.z;
+                        const d = Math.hypot(dx, dz);
+                        const min = 17 * /** @type {number} */ (S.walkerScale);
+                        if (d < min && d > 1e-3) {
+                            const push = (min - d) * Math.min(1, dt * 2.2);
+                            t.position.x += (dx / d) * push;
+                            t.position.z += (dz / d) * push;
+                        }
+                    }
+                }
+            }
+        }
         speeder?.tick(dt);
         speeder?.update(dt);
         for (const w of wingmen) {
@@ -852,6 +923,7 @@ async function boot() {
         // grains it sheds have to be in the pool before the pool is uploaded.
         wake.update(dt, rig.camera.position);
         spray.update(dt, rig.camera.position);
+        smoke.update(dt, rig.camera.position);
         explosions.update(dt, rig.camera.position);
         const tVfx = performance.now();
 
