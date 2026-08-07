@@ -596,7 +596,7 @@ async function boot() {
                 // to the side of the skid line.
                 const side = facing + (Math.random() < 0.5 ? 1 : -1)
                     * (0.9 + Math.random() * 0.7);
-                const throwOut = 7 + Math.random() * 3;
+                const throwOut = 4 + Math.random() * 1.5;
                 wk.pilotX = x + Math.sin(side) * throwOut;
                 wk.pilotZ = z + Math.cos(side) * throwOut;
                 const slot = wrecks.indexOf(wk);
@@ -1010,31 +1010,88 @@ async function boot() {
         //             on a stale bearing, because his bearing is his squad's.
         {
             const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-            // The two AT-AT herds separate across herds exactly as they do
-            // within one: by tempo, never by position — the machine behind
-            // eases off, the one ahead presses on, and the pair strings out
-            // instead of walking through each other. A positional push on
-            // something with legs reads as crabbing; this reads as marching.
+            // AT-AT collision avoidance, over *both* herds as one population.
+            // Tempo alone cannot do this: it strings out machines on parallel
+            // courses, but these converge on the player from different
+            // bearings, so their paths cross and a slowed machine just meets
+            // the other later. So the yielding machine (the one further from
+            // the player) *steers* — a gentle bend away from anything in its
+            // forward cone, at a rate a walker could plausibly turn at,
+            // started early enough to be invisible. Tempo still strings out
+            // the followers, and a hard emergency floor keeps hulls apart if
+            // geometry conspires anyway.
             {
-                const sep = 44 * /** @type {number} */ (S.walkerScale);
-                const n1 = Math.min(walkers.count, walkers.walkers.length);
-                const n2 = Math.min(walkers2.count, walkers2.walkers.length);
-                for (let i = 0; i < n1; i++) {
-                    const A = walkers.walkers[i];
-                    for (let k = 0; k < n2; k++) {
-                        const B = walkers2.walkers[k];
-                        const d = Math.hypot(
-                            A.position.x - B.position.x, A.position.z - B.position.z
-                        );
-                        if (d >= sep) continue;
-                        const crowd = 1 - d / sep;
-                        const p = character.position;
+                const scale = /** @type {number} */ (S.walkerScale);
+                const look = 95 * scale;   // begin bending away
+                const hard = 30 * scale;   // absolute hull floor
+                const all = [];
+                for (const herd of [walkers, walkers2]) {
+                    const n = Math.min(herd.count, herd.walkers.length);
+                    for (let i = 0; i < n; i++) all.push(herd.walkers[i]);
+                }
+                const p = character.position;
+                // The line advances as a *formation*: one shared bearing —
+                // the line's centroid toward the player — that every machine
+                // eases its heading toward, each with a slow personal wander
+                // so the line drifts naturally rather than marching a parade.
+                // Parallel courses cannot cross, which is the whole fix; the
+                // steer/tempo/floor below are the belt over these braces.
+                // Machines close to (or past) the player are left on their
+                // own heading — they are marching through to the recycle, and
+                // a formation bearing computed across the player flips.
+                if (all.length) {
+                    let cx = 0, cz = 0;
+                    for (const w of all) { cx += w.position.x; cz += w.position.z; }
+                    cx /= all.length;
+                    cz /= all.length;
+                    const advance = Math.atan2(p.x - cx, p.z - cz);
+                    for (let i = 0; i < all.length; i++) {
+                        const w = all[i];
+                        const dp = Math.hypot(p.x - w.position.x, p.z - w.position.z);
+                        if (dp < 80) continue;
+                        const wander = Math.sin(time * 0.07 + i * 2.1) * 0.09;
+                        const want = advance + wander;
+                        w.yaw = wrap(w.yaw + wrap(want - w.yaw) * Math.min(1, dt * 0.5));
+                    }
+                }
+                for (let i = 0; i < all.length; i++) {
+                    for (let k = i + 1; k < all.length; k++) {
+                        const A = all[i];
+                        const B = all[k];
+                        const dx = B.position.x - A.position.x;
+                        const dz = B.position.z - A.position.z;
+                        const d = Math.hypot(dx, dz);
+                        if (d >= look) continue;
+                        const crowd = 1 - d / look;
                         const dA = Math.hypot(p.x - A.position.x, p.z - A.position.z);
                         const dB = Math.hypot(p.x - B.position.x, p.z - B.position.z);
-                        const behind = dA > dB ? A : B;
-                        const ahead = dA > dB ? B : A;
-                        behind._rateWant -= crowd * 0.3;
-                        ahead._rateWant += crowd * 0.12;
+                        const yieldW = dA > dB ? A : B;
+                        const other = dA > dB ? B : A;
+                        // Steer: only if the other machine sits ahead-ish of
+                        // the yielder's course; bend away from it, harder as
+                        // it gets closer.
+                        const bearing = Math.atan2(
+                            other.position.x - yieldW.position.x,
+                            other.position.z - yieldW.position.z
+                        );
+                        const rel = wrap(bearing - yieldW.yaw);
+                        if (Math.abs(rel) < 0.85) {
+                            const turn = 0.16 * crowd * (rel >= 0 ? -1 : 1);
+                            yieldW.yaw = wrap(yieldW.yaw + turn * dt);
+                        }
+                        // Tempo still strings the pair out.
+                        yieldW._rateWant -= crowd * 0.25;
+                        other._rateWant += crowd * 0.1;
+                        // Emergency floor: hulls must never interpenetrate,
+                        // whatever it costs the gait for a few frames.
+                        if (d < hard && d > 1e-3) {
+                            const push = (hard - d) * 0.5 * Math.min(1, dt * 3);
+                            const nx = dx / d, nz = dz / d;
+                            A.position.x -= nx * push;
+                            A.position.z -= nz * push;
+                            B.position.x += nx * push;
+                            B.position.z += nz * push;
+                        }
                     }
                 }
             }
