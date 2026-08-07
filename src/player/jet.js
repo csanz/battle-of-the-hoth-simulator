@@ -109,6 +109,7 @@ export class Jet {
                 jetParams: { value: this._params },
                 jetGlow: { value: 1 },
                 jetHaloBack: { value: 0.1 },
+                jetDebug: { value: 0 },
             },
             // ALPHA_ADD with alpha written at 1: brightens what it overlaps.
             transparent: true,
@@ -152,6 +153,7 @@ export class Jet {
         this._params.set(throttle, this._time, WIDTH * S.jetWidth, FLARE * S.jetFlare);
         this.material.uniforms.jetGlow.value = S.jetGlow ?? 1;
         this.material.uniforms.jetHaloBack.value = S.jetHaloBack ?? 0.1;
+        this.material.uniforms.jetDebug.value = S.jetDebug ? 1 : 0;
         // The uniform values are the scratch objects themselves, mutated above —
         // Three re-uploads them on the next draw; nothing else to write.
     }

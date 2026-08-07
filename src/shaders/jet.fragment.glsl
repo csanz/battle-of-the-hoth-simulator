@@ -24,6 +24,7 @@ in float vThrottle;
 uniform vec4 jetParams;   // (throttle, time, width, flare)
 uniform float jetGlow;    // multiplier on the HDR push, 1 = the tuned look
 uniform float jetHaloBack; // fraction of the plume the throat ramps in over
+uniform float jetDebug;   // 1 = flat magenta coverage view, for placement
 
 layout(location = 0) out vec4 fragColor;
 
@@ -74,5 +75,13 @@ void main() {
     // the plume out-runs the snow, and therefore how much halo the bloom pass
     // is handed to spread over the hull behind it.
     vec3 c = (tint * body * 16.0 + THROAT * core * 30.0 * heat) * jetGlow;
+    // Debug: paint the whole footprint flat magenta at honest coverage — no
+    // HDR push, no bloom halo, no colour ramp — so the overlay's jet sliders
+    // can be dialled against exactly the space the plume occupies.
+    if (jetDebug > 0.5) {
+        float cover = step(0.02, across) * step(0.02, amount);
+        fragColor = vec4(vec3(1.0, 0.0, 1.0) * (0.35 + 0.65 * body) * cover, 1.0);
+        return;
+    }
     fragColor = vec4(c * amount, 1.0);
 }

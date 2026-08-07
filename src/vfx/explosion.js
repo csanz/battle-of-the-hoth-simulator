@@ -172,6 +172,7 @@ export class Explosions {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
         const mesh = new THREE.Mesh(geometry);
         mesh.name = "explosions";
         mesh.metadata = { triangles: MAX * 2, vertices: MAX * 4 };
@@ -200,6 +201,7 @@ export class Explosions {
         geometry.setAttribute("aData", new THREE.BufferAttribute(data, 3));
         geometry.setAttribute("aCorner", new THREE.BufferAttribute(corner, 2));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
         const mesh = new THREE.Mesh(geometry);
         mesh.name = "embers";
         mesh.metadata = { triangles: EMB_N * 2, vertices: EMB_N * 4 };

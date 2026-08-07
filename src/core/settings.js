@@ -309,6 +309,9 @@ export const S = {
      * eye instead of waiting for a wingman to be shot down.
      */
     burnPreview: false,
+    /** Paint the jet plume flat magenta so its true footprint is visible
+     *  while the Jet sliders are being dialled. */
+    jetDebug: false,
     burnBackZ: 2.4,
     burnY: 0.95,
     /**
@@ -626,6 +629,7 @@ export const SCHEMA = [
             { k: "jetFlare", l: "Jet flare", t: "f", min: 0.1, max: 4, step: 0.05 },
             { k: "jetGlow", l: "Jet glow", t: "f", min: 0, max: 2, step: 0.02 },
             { k: "jetHaloBack", l: "Halo back-off", t: "f", min: 0, max: 0.5, step: 0.01 },
+            { k: "jetDebug", l: "Jet debug tint", t: "b" },
             { k: "burnPreview", l: "Burn preview", t: "b" },
             { k: "burnBackZ", l: "Burn fwd/back", t: "f", min: -2, max: 6, step: 0.05 },
             { k: "burnY", l: "Burn up/down", t: "f", min: -1.5, max: 3, step: 0.05 },
