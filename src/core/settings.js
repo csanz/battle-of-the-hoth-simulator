@@ -389,6 +389,14 @@ export const S = {
     walkerSpeed: 1.0,
     /** How much snow has settled on the hull's upward faces. */
     walkerSnow: 0.45,
+    /**
+     * The red viewport band, nudged live off the measured slit: metres up,
+     * metres forward of the face, and a width multiplier. Overlay "Walker"
+     * group — dial it on a machine standing close.
+     */
+    eyeLift: 0.6,
+    eyeOut: 0.0,
+    eyeSpan: 1.0,
     /** The chin guns. Off stops the firing and the bolts, not the head tracking. */
     walkerFire: true,
     /**
@@ -678,6 +686,9 @@ export const SCHEMA = [
             { k: "walkerMuzzleSpan", l: "Muzzle spread", t: "f", min: -1, max: 2, step: 0.01 },
             { k: "walkerMuzzleY", l: "Muzzle up/down", t: "f", min: -2, max: 2, step: 0.01 },
             { k: "walkerMuzzleZ", l: "Muzzle fwd/back", t: "f", min: -2, max: 4, step: 0.01 },
+            { k: "eyeLift", l: "Eyes up/down", t: "f", min: -1.5, max: 2.5, step: 0.02 },
+            { k: "eyeOut", l: "Eyes fwd/back", t: "f", min: -1.5, max: 1.5, step: 0.02 },
+            { k: "eyeSpan", l: "Eyes width", t: "f", min: 0.3, max: 2, step: 0.02 },
             { k: "showMuzzles", l: "Muzzle markers", t: "b" },
             { k: "walkerSpeed", l: "Gait rate", t: "f", min: 0, max: 5, step: 0.05 },
             { k: "walkerSnow", l: "Snow on hull", t: "f", min: 0, max: 1, step: 0.01 },

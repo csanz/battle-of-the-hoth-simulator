@@ -624,27 +624,37 @@ export class Wingman {
         if (this.damage > 0) {
             this._puffT -= dt;
             if (this._puffT <= 0) {
-                this._puffT = 0.055;
+                this._puffT = 0.05;
                 const v = P.velocity;
-                const bx = P.position.x - Math.sin(P.facing) * 2.2;
-                const by = P.position.y + 0.35;
-                const bz = P.position.z - Math.cos(P.facing) * 2.2;
+                // Shed at the engine block — the hull's tail, level with the
+                // canopy, so the trail streams *off* the craft rather than
+                // hanging under it.
+                const bx = P.position.x - Math.sin(P.facing) * 2.4;
+                const by = P.position.y + 0.95;
+                const bz = P.position.z - Math.cos(P.facing) * 2.4;
                 const shade = this.damage >= 2 ? 0.045 : 0.09;
                 fx.smoke.emit(
                     bx, by, bz,
                     v.x * 0.22 + (Math.random() - 0.5) * 0.8,
-                    0.6 + Math.random() * 0.5,
+                    1.1 + Math.random() * 0.6,
                     v.z * 0.22 + (Math.random() - 0.5) * 0.8,
                     0.5 + Math.random() * 0.25, 1.7,
                     1.5 + Math.random() * 0.7,
                     shade, shade, shade, 0.55, true
                 );
                 if (this.damage >= 2) {
+                    // The fire: a fat tongue of flame off the tail, riding
+                    // most of the craft's own speed so it licks backward
+                    // along the hull — unmissable, which is the point of the
+                    // second stage existing.
                     fx.smoke.emit(
-                        bx, by - 0.2, bz,
-                        v.x * 0.5, 0.5, v.z * 0.5,
-                        0.38, 0.7, 0.24 + Math.random() * 0.14,
-                        2.6, 0.85, 0.22, 0.5, false
+                        bx, by - 0.25, bz,
+                        v.x * 0.72 + (Math.random() - 0.5) * 1.2,
+                        0.9 + Math.random() * 0.8,
+                        v.z * 0.72 + (Math.random() - 0.5) * 1.2,
+                        0.62 + Math.random() * 0.25, 1.4,
+                        0.42 + Math.random() * 0.2,
+                        3.2, 1.05, 0.26, 0.8, false
                     );
                 }
             }

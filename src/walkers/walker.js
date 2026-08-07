@@ -1294,24 +1294,23 @@ export class WalkerHerd {
             const e = head.eye;
             const o = head.noseBone * 12;
             const bs = h.basisScale, ts = h.transScale;
-            const m = [];
+            const m = new Float32Array(9);
             for (let k = 0; k < 9; k++) m[k] = asset.anim[o + k] * bs;
-            const t = [
+            const t = new Float32Array([
                 asset.anim[o + 9] * ts, asset.anim[o + 10] * ts, asset.anim[o + 11] * ts,
-            ];
-            const toBind = (x, y, z) => {
-                const dx = x - t[0], dy = y - t[1], dz = z - t[2];
-                // Orthonormal basis: the inverse rotation is the transpose.
-                return new Float32Array([
-                    m[0] * dx + m[1] * dy + m[2] * dz,
-                    m[3] * dx + m[4] * dy + m[5] * dz,
-                    m[6] * dx + m[7] * dy + m[8] * dz,
-                ]);
-            };
+            ]);
+            // The frame-0 inverse and the measured slit, kept whole rather
+            // than pre-baked into endpoints: the overlay's eye sliders nudge
+            // the slit live, so `collectEyes` re-derives the bind-space ends
+            // each frame from these plus `S.eyeLift`/`S.eyeOut`/`S.eyeSpan`.
             this.eyeBind = {
                 bone: head.noseBone,
-                a: toBind(-e.halfSpan, e.y, e.z),
-                b: toBind(e.halfSpan, e.y, e.z),
+                m, t,
+                y: e.y,
+                z: e.z,
+                halfSpan: e.halfSpan,
+                a: new Float32Array(3),
+                b: new Float32Array(3),
             };
         }
 
@@ -1674,6 +1673,22 @@ export class WalkerHerd {
     collectEyes(bands) {
         const e = this.eyeBind;
         if (!e || !this._visible) return;
+        // The slit in the standing frame, with the overlay's live offsets
+        // folded in, taken to bind space through the stored frame-0 inverse —
+        // once per herd per frame, so the sliders tune the band in place.
+        const ey = e.y + /** @type {number} */ (S.eyeLift ?? 0);
+        const ez = e.z + /** @type {number} */ (S.eyeOut ?? 0);
+        const es = e.halfSpan * /** @type {number} */ (S.eyeSpan ?? 1);
+        const m = e.m, t = e.t;
+        for (let side = 0; side < 2; side++) {
+            const out = side === 0 ? e.a : e.b;
+            const dx = (side === 0 ? -es : es) - t[0];
+            const dy = ey - t[1];
+            const dz = ez - t[2];
+            out[0] = m[0] * dx + m[1] * dy + m[2] * dz;
+            out[1] = m[3] * dx + m[4] * dy + m[5] * dz;
+            out[2] = m[6] * dx + m[7] * dy + m[8] * dz;
+        }
         // Through the same per-frame bone matrices the skin texture carries —
         // the staging array still holds this frame's values, so the band lands
         // exactly where the face's vertices did: gait rock, head look and
