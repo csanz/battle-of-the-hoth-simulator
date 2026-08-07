@@ -115,7 +115,7 @@ const STEP_AUDIBLE = 380;
  * event and because hearing one fired from beyond the range you can make out the
  * machine is most of what makes the herd feel like a threat rather than scenery.
  */
-const SHOT_AUDIBLE = 520;
+const SHOT_AUDIBLE = 420;
 /**
  * Metres per second. Sound is slow, and at two hundred metres the delay between
  * seeing the foot land and hearing it is a little over half a second — long
@@ -458,13 +458,14 @@ export class Soundscape {
             // No `gainMul`/`rateMul` here: those exist to make the *shared*
             // step sample read as a smaller machine, and each herd's cannon is
             // its own recording with its own manifest level. Distance is the
-            // only thing that scales a shot — all the way to zero. This used
-            // to sit on a 0.25 floor, and a floor under a battlefield's worth
-            // of cannon is a barrage at every range that buries the score;
-            // squared falloff with no floor is what makes closing on the
-            // machines something you *hear* happen.
+            // only thing that scales a shot — all the way to zero, and
+            // *cubed*. Squared was not enough: a machine only fires once the
+            // player is inside its ~340 m gun range, so every shot the player
+            // ever hears lives in the top of the curve, and a shallow top is
+            // exactly "loud at every distance". The cube keeps a near shot a
+            // crack and makes two hundred metres genuinely far.
             this.audio.play(shotKey, {
-                gain: near * near,
+                gain: near * near * near,
                 rate: 0.94 + Math.random() * 0.1,
                 delay: Math.min(1.6, d / SPEED_OF_SOUND),
             });

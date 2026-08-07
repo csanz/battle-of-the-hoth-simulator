@@ -168,7 +168,7 @@ export const AUDIO_MANIFEST = {
     walkerShot: {
         url: "audio/at-walker-canon.mp3",
         bus: "sfx",
-        gain: 0.5,
+        gain: 0.36,
         minGap: 0.05,
     },
 
@@ -178,7 +178,7 @@ export const AUDIO_MANIFEST = {
     atstShot: {
         url: "audio/at-st-cannon.mp3",
         bus: "sfx",
-        gain: 0.45,
+        gain: 0.32,
         minGap: 0.05,
     },
 
