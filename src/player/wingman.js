@@ -332,22 +332,38 @@ class SimPilot {
         const dt = Math.min(rawDt || 0, 1 / 30);
         if (dt <= 0) return;
 
-        // Going down: a flat spin, the hull rocking on its skids, momentum
-        // bleeding off, the deck coming up. Owns the whole update — a craft
-        // in a death spiral is not flying its phase machine.
+        // Going down: a spiral dive, the way an aircraft actually goes in —
+        // one wing drops and *stays* dropped, the bank deepening, the heading
+        // curving into the turn, the momentum carrying the machine toward
+        // wherever it was going to die (a point near the walker line, chosen
+        // at the killing hit). Owns the whole update.
         if (this.downed) {
             this._downT = (this._downT ?? 0) + dt;
-            const bleed = Math.max(0, 1 - dt * 0.35);
-            this.velocity.x *= bleed;
-            this.velocity.z *= bleed;
+            const dir = this._spinDir || 1;
+            // The bank commits: no rocking back, just deeper.
+            this._bank = Math.min(2.1, (this._bank || 0.35) + dt * 0.85);
+            this.lean = dir * this._bank;
+            // The spiral: heading curves with the bank, the way a wing-low
+            // machine's nose follows its dropped wing around.
+            this.facing = wrapAngle(
+                this.facing + dir * (0.35 + this._bank * 0.55) * dt
+            );
+            this.steerRate = 0;
+            // Momentum bends toward the crash point — not steering, just the
+            // arc the machine was always going to describe.
+            const tx = this._crashX ?? this.position.x + Math.sin(this.facing) * 120;
+            const tz = this._crashZ ?? this.position.z + Math.cos(this.facing) * 120;
+            const dTx = tx - this.position.x;
+            const dTz = tz - this.position.z;
+            const dT = Math.hypot(dTx, dTz) || 1;
+            const sp = Math.max(16, Math.hypot(this.velocity.x, this.velocity.z));
+            const k = Math.min(1, dt * 1.1);
+            this.velocity.x += (dTx / dT * sp - this.velocity.x) * k;
+            this.velocity.z += (dTz / dT * sp - this.velocity.z) * k;
             this.position.x += this.velocity.x * dt;
             this.position.z += this.velocity.z * dt;
-            this.facing = wrapAngle(this.facing + (this._spin || 1.6) * dt);
-            this.lean = Math.sin(this._downT * 5) * 0.85;
-            this.steerRate = 0;
-            const s = Math.hypot(this.velocity.x, this.velocity.z);
-            this.speed01 = Math.min(1, s / 19.5);
-            this.speedRaw = s / 19.5;
+            this.speed01 = Math.min(1, sp / 19.5);
+            this.speedRaw = sp / 19.5;
             this.driveHeld = false;
             this.boostHeld = false;
             this.fireHeld = false;
@@ -355,7 +371,10 @@ class SimPilot {
                 ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
             this.pathY = this.groundY;
             this.lift01 = 0;
-            this.climb = expDamp(this.climb, -4, 0.9, dt);
+            // Far from the mark it holds a shallow burning descent; inside it
+            // the nose lets go and the spiral tightens into the ground.
+            const sink = dT < 60 ? -4 : 2.2;
+            this.climb = expDamp(this.climb, sink, dT < 60 ? 1.0 : 0.5, dt);
             this.position.y = Math.max(
                 this.groundY + 2.6 + this.climb, this.groundY + 0.3
             );
@@ -633,7 +652,32 @@ export class Wingman {
         if (this.damage >= 3) {
             P.downed = true;
             P._downT = 0;
-            P._spin = (Math.random() < 0.5 ? -1 : 1) * (1.3 + Math.random() * 1.2);
+            P._bank = 0.35;
+            P._spinDir = Math.random() < 0.5 ? -1 : 1;
+            // Where it goes in: a spot near the walker line, so the crashes
+            // land in the battle rather than out on some empty dune.
+            const herd = P.walkers;
+            let best = null;
+            let bd = Infinity;
+            if (herd && herd.walkers) {
+                const n = Math.min(herd.count, herd.walkers.length);
+                for (let i = 0; i < n; i++) {
+                    const w = herd.walkers[i];
+                    const d = Math.hypot(
+                        w.position.x - P.position.x, w.position.z - P.position.z
+                    );
+                    if (d < bd) { bd = d; best = w; }
+                }
+            }
+            const ang = Math.random() * Math.PI * 2;
+            const r = 32 + Math.random() * 34;
+            if (best) {
+                P._crashX = best.position.x + Math.sin(ang) * r;
+                P._crashZ = best.position.z + Math.cos(ang) * r;
+            } else {
+                P._crashX = P.position.x + Math.sin(P.facing) * 130;
+                P._crashZ = P.position.z + Math.cos(P.facing) * 130;
+            }
         }
     }
 

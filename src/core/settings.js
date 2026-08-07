@@ -356,7 +356,7 @@ export const S = {
     /** Uniform scale on the ~1.5 km hull — forced perspective knob. */
     destroyerScale: 0.35,
     /** Degrees off the sun's azimuth (where the walkers come from). */
-    destroyerBearing: 12,
+    destroyerBearing: 175,
     /** Formation heading, degrees — turns every hull's profile at once. */
     destroyerYaw: 55,
     /**
@@ -665,7 +665,7 @@ export const SCHEMA = [
             { k: "destroyerAlt", l: "Altitude", t: "f", min: 200, max: 2000, step: 10 },
             { k: "destroyerDist", l: "Distance", t: "f", min: 800, max: 3600, step: 20 },
             { k: "destroyerScale", l: "Scale", t: "f", min: 0.05, max: 1, step: 0.01 },
-            { k: "destroyerBearing", l: "Bearing", t: "f", min: -90, max: 90, step: 1 },
+            { k: "destroyerBearing", l: "Bearing", t: "f", min: -180, max: 180, step: 1 },
             { k: "destroyerYaw", l: "Heading", t: "f", min: -180, max: 180, step: 1 },
             { k: "showWingman", l: "Wingman (reload)", t: "b" },
         ],

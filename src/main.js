@@ -566,14 +566,27 @@ async function boot() {
                     x - Math.sin(facing) * 4.5, z - Math.cos(facing) * 4.5,
                     2.4, 0.5, 0.55, 1.0, 0.3, facing, 3.0, 1.0
                 );
-                for (let k = 0; k < 42; k++) {
+                // The splash: a machine-sized slap of snow — a tall central
+                // plume and a low fast ring racing out from the hull, the way
+                // a heavy impact into powder actually reads.
+                for (let k = 0; k < 60; k++) {
                     const a = Math.random() * Math.PI * 2;
-                    const out = 3 + Math.random() * 9;
+                    const out = 4 + Math.random() * 11;
                     spray.emit(
                         x + Math.cos(a) * 0.5, y + 0.2, z + Math.sin(a) * 0.5,
-                        Math.cos(a) * out, 4 + Math.random() * 9, Math.sin(a) * out,
-                        0.05 + Math.random() * 0.08, 0.8 + Math.random() * 1.2,
+                        Math.cos(a) * out, 6 + Math.random() * 12, Math.sin(a) * out,
+                        0.06 + Math.random() * 0.1, 0.9 + Math.random() * 1.3,
                         Math.random() < 0.4 ? 1 : 0, 1.2
+                    );
+                }
+                for (let k = 0; k < 30; k++) {
+                    const a = (k / 30) * Math.PI * 2 + Math.random() * 0.2;
+                    const out = 12 + Math.random() * 8;
+                    spray.emit(
+                        x + Math.cos(a) * 1.4, y + 0.15, z + Math.sin(a) * 1.4,
+                        Math.cos(a) * out, 1.5 + Math.random() * 2.5, Math.sin(a) * out,
+                        0.05 + Math.random() * 0.06, 0.6 + Math.random() * 0.6,
+                        1, 1.6
                     );
                 }
                 // Claim a wreck slot: the hull stays, sunk to its skids.
