@@ -870,6 +870,20 @@ async function boot() {
         audio, { controller: character, spells, walkers, atst: atsts, speeder }
     );
     const soundButton = createSoundButton(audio, { onEnable: () => soundscape.start() });
+    // Mobile belt: some engines refuse an AudioContext resume that did not
+    // ride a touch gesture, and a phone that entered through the gate without
+    // sound would stay silent for ever. Any later touch retries the unlock;
+    // once it lands, the listener has nothing left to do.
+    window.addEventListener("pointerdown", () => {
+        if (audio.hasAssets && !audio.unlocked) {
+            audio.unlock().then((ok) => {
+                if (ok) {
+                    soundscape.start();
+                    soundButton.sync();
+                }
+            });
+        }
+    }, { passive: true });
 
     // ------------------------------------------------------------- warm-up
     // Everything that can compile, compiles here — behind the loading screen.

@@ -16,7 +16,7 @@
  *   left half    the stick. It recentres wherever the thumb lands, so there is
  *                no hunting for a fixed base you cannot see under your own hand.
  *   right half   look. Drag to turn, pinch to zoom.
- *   bottom right slide, and the five spells above it.
+ *   bottom right fire, with the climb/descend pair above it.
  *   top left     settings, because there is no F1 on a phone and the overlay
  *                itself lives down the right edge.
  *
@@ -105,16 +105,16 @@ const CSS = `
   color: #eaf4ff;
 }
 
-#tc .slide {
+#tc .fire {
   right: 20px; bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   width: 108px; height: 62px; border-radius: 34px;
 }
-#tc .spell {
-  right: 26px; width: 46px; height: 46px; border-radius: 50%;
-  letter-spacing: 0; text-indent: 0; font-size: 12px;
+#tc .alt {
+  right: 26px; width: 54px; height: 54px; border-radius: 50%;
+  letter-spacing: 0; text-indent: 0; font-size: 16px;
 }
 /* The opening hint is centred on the bottom edge, which on a phone is where the
-   slide button and the spell column are. Lifted above them and narrowed to clear
+   fire button and the altitude pair are. Lifted above them and narrowed to clear
    the right-hand stack; it fades out after a few seconds either way. */
 body.touch #hint {
   bottom: calc(108px + env(safe-area-inset-bottom, 0px));
@@ -149,7 +149,9 @@ export function createTouchControls(hooks) {
         <div class="base"></div>
         <div class="knob"></div>
       </div>
-      <button class="btn slide" type="button">slide</button>
+      <button class="btn fire" type="button">fire</button>
+      <button class="btn alt up" type="button" aria-label="climb">&#9650;</button>
+      <button class="btn alt down" type="button" aria-label="descend">&#9660;</button>
       <button class="btn gear" type="button" aria-label="settings">&#9881;</button>
     `;
     document.body.appendChild(root);
@@ -158,25 +160,17 @@ export function createTouchControls(hooks) {
     const stick = /** @type {HTMLElement} */ (root.querySelector(".stick"));
     const base = /** @type {HTMLElement} */ (root.querySelector(".base"));
     const knob = /** @type {HTMLElement} */ (root.querySelector(".knob"));
-    const slideBtn = /** @type {HTMLElement} */ (root.querySelector(".slide"));
+    const fireBtn = /** @type {HTMLElement} */ (root.querySelector(".fire"));
+    const upBtn = /** @type {HTMLElement} */ (root.querySelector(".alt.up"));
+    const downBtn = /** @type {HTMLElement} */ (root.querySelector(".alt.down"));
     const gearBtn = /** @type {HTMLElement} */ (root.querySelector(".gear"));
 
-    // The five spells, stacked up the right edge above the slide. Built here
-    // rather than in the markup above so the geometry is one expression.
-    for (let n = 5; n >= 1; n--) {
-        const b = document.createElement("button");
-        b.className = "btn spell";
-        b.type = "button";
-        b.textContent = String(n);
-        b.style.bottom = `calc(${100 + (5 - n) * 56}px + env(safe-area-inset-bottom, 0px))`;
-        bindButton(b, () => {
-            input.spellPressed = n;
-            if (n === 2) input.spellHeld2 = true;
-        }, () => {
-            if (n === 2) input.spellHeld2 = false;
-        });
-        root.appendChild(b);
-    }
+    // The altitude pair, stacked above the trigger: taps ride the same E
+    // ladder the keyboard uses — up a rung toward the ceiling, down a rung
+    // toward the deck. (The walking demo's five spell buttons lived here;
+    // flying hides the whole spell system, so they went with it.)
+    upBtn.style.bottom = "calc(170px + env(safe-area-inset-bottom, 0px))";
+    downBtn.style.bottom = "calc(104px + env(safe-area-inset-bottom, 0px))";
 
     // ------------------------------------------------------------------ stick
     let stickId = -1;
@@ -201,7 +195,7 @@ export function createTouchControls(hooks) {
     stick.addEventListener("pointerdown", (e) => {
         if (stickId !== -1) return;
         stickId = e.pointerId;
-        stick.setPointerCapture(e.pointerId);
+        try { stick.setPointerCapture(e.pointerId); } catch { /* released already */ }
         stick.classList.add("held");
         // Recentre under the thumb. A base you cannot see because your own hand
         // is on top of it is a base you will miss.
@@ -260,7 +254,7 @@ export function createTouchControls(hooks) {
     let pinchDist = 0;
 
     look.addEventListener("pointerdown", (e) => {
-        look.setPointerCapture(e.pointerId);
+        try { look.setPointerCapture(e.pointerId); } catch { /* released already */ }
         looks.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (looks.size === 2) pinchDist = spread(looks);
         e.preventDefault();
@@ -294,7 +288,13 @@ export function createTouchControls(hooks) {
     look.addEventListener("pointercancel", endLook);
 
     // ---------------------------------------------------------------- buttons
-    bindButton(slideBtn, () => { touch.surf = true; }, () => { touch.surf = false; });
+    bindButton(fireBtn, () => { touch.surf = true; }, () => { touch.surf = false; });
+    bindButton(upBtn, () => {
+        input.riseLevel = Math.min(3, (input.riseLevel || 1) + 1);
+    }, null);
+    bindButton(downBtn, () => {
+        input.riseLevel = Math.max(1, (input.riseLevel || 1) - 1);
+    }, null);
     bindButton(gearBtn, () => hooks?.onToggleOverlay?.(), null);
 
     // ----------------------------------------------------------------- reveal
@@ -310,7 +310,7 @@ export function createTouchControls(hooks) {
         touch.present = true;
         restStick();
         const hint = document.getElementById("hint");
-        if (hint) hint.textContent = "stick to move · drag to look · hold slide";
+        if (hint) hint.textContent = "stick to fly · drag to look · hold fire";
     };
     window.addEventListener("pointerdown", reveal, { capture: true });
 
@@ -344,7 +344,9 @@ function spread(map) {
  */
 function bindButton(el, onDown, onUp) {
     el.addEventListener("pointerdown", (e) => {
-        el.setPointerCapture(e.pointerId);
+        // A fast tap can release the pointer before capture lands; capture is
+        // a nicety (slide-off-still-held), losing it must not cost the press.
+        try { el.setPointerCapture(e.pointerId); } catch { /* released already */ }
         el.classList.add("down");
         onDown?.();
         e.preventDefault();
