@@ -30,7 +30,7 @@ import { SpellSystem } from "./spells/spellSystem.js";
 import { WalkerHerd } from "./walkers/walker.js";
 import { loadWalkerAsset } from "./walkers/walkerAsset.js";
 import { Speeder } from "./player/speeder.js";
-import { Wingman } from "./player/wingman.js";
+import { Wingman, emitBurnTrail } from "./player/wingman.js";
 import { Overlay } from "./ui/overlay.js";
 import { createFpsMeter } from "./ui/fpsMeter.js";
 import { Sky } from "./render/sky.js";
@@ -932,6 +932,12 @@ async function boot() {
         await whenReady(gfx, passes[i], "post:" + passes[i].name);
     }
 
+    // The one-draw effect systems compile here too — an eye band or a smoke
+    // puff whose shader compiles on its first visible frame is a hitch in the
+    // opening seconds, which reads as the speeder stuttering.
+    await whenReady(gfx, eyeBands.material, "eyeBands material");
+    await whenReady(gfx, smoke.material, "smoke material");
+
     await loading.phase("warming render targets", 0.92);
     // A few real frames so every render target is allocated and every pipeline
     // has actually been bound at least once.
@@ -948,6 +954,8 @@ async function boot() {
     let time = 0;
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
+    /** Cadence clock for the overlay's burn preview trail. */
+    let burnPreviewT = 0;
     /**
      * The AT-AT line's advance bearing, latched from the opening line's own
      * mean heading on the first frame and never recomputed — the formation
@@ -1294,6 +1302,21 @@ async function boot() {
         // grains it sheds have to be in the pool before the pool is uploaded.
         wake.update(dt, rig.camera.position);
         spray.update(dt, rig.camera.position);
+        // The overlay's burn preview: the wingmen's damage trail, lit on the
+        // player craft so the burn sliders can be dialled against a hull the
+        // player can actually orbit.
+        if (S.burnPreview && speeder) {
+            burnPreviewT -= dt;
+            if (burnPreviewT <= 0) {
+                burnPreviewT = 0.05;
+                // Off the *drawn* hull, not the controller — the controller
+                // rides hover-height below the craft the player is looking at.
+                emitBurnTrail(
+                    smoke, speeder.position, speeder.yaw,
+                    character.velocity, true
+                );
+            }
+        }
         smoke.update(dt, rig.camera.position);
         explosions.update(dt, rig.camera.position);
         const tVfx = performance.now();

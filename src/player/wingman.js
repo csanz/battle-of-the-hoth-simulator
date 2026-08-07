@@ -88,6 +88,48 @@ const TROOPER_RUN_ALT = 3.5;
 
 const _toT = new THREE.Vector3();
 
+/**
+ * One tick of a burning craft's trail: a dark smoke puff, and — when the
+ * burn has reached the fire stage — a tongue of flame riding the craft's
+ * own speed backward along the hull. Shared by the wingmen's damage ladder
+ * and the overlay's burn-preview on the player craft, and positioned by the
+ * `S.burnBackZ` / `S.burnY` sliders so the shed point can be dialled by eye.
+ *
+ * @param {import("../vfx/smokeTrails.js").SmokeTrails} smoke
+ * @param {{x:number,y:number,z:number}} pos hull position
+ * @param {number} facing yaw, radians
+ * @param {{x:number,z:number}} vel world velocity
+ * @param {boolean} withFire stage two — flame with the smoke
+ */
+export function emitBurnTrail(smoke, pos, facing, vel, withFire) {
+    const back = /** @type {number} */ (S.burnBackZ ?? 2.4);
+    const lift = /** @type {number} */ (S.burnY ?? 0.95);
+    const bx = pos.x - Math.sin(facing) * back;
+    const by = pos.y + lift;
+    const bz = pos.z - Math.cos(facing) * back;
+    const shade = withFire ? 0.045 : 0.09;
+    smoke.emit(
+        bx, by, bz,
+        vel.x * 0.22 + (Math.random() - 0.5) * 0.8,
+        1.1 + Math.random() * 0.6,
+        vel.z * 0.22 + (Math.random() - 0.5) * 0.8,
+        0.5 + Math.random() * 0.25, 1.7,
+        1.5 + Math.random() * 0.7,
+        shade, shade, shade, 0.55, true
+    );
+    if (withFire) {
+        smoke.emit(
+            bx, by - 0.25, bz,
+            vel.x * 0.72 + (Math.random() - 0.5) * 1.2,
+            0.9 + Math.random() * 0.8,
+            vel.z * 0.72 + (Math.random() - 0.5) * 1.2,
+            0.62 + Math.random() * 0.25, 1.4,
+            0.42 + Math.random() * 0.2,
+            3.2, 1.05, 0.26, 0.8, false
+        );
+    }
+}
+
 function wrapAngle(a) {
     while (a > Math.PI) a -= Math.PI * 2;
     while (a < -Math.PI) a += Math.PI * 2;
@@ -701,38 +743,9 @@ export class Wingman {
             this._puffT -= dt;
             if (this._puffT <= 0) {
                 this._puffT = 0.05;
-                const v = P.velocity;
-                // Shed at the engine block — the hull's tail, level with the
-                // canopy, so the trail streams *off* the craft rather than
-                // hanging under it.
-                const bx = P.position.x - Math.sin(P.facing) * 2.4;
-                const by = P.position.y + 0.95;
-                const bz = P.position.z - Math.cos(P.facing) * 2.4;
-                const shade = this.damage >= 2 ? 0.045 : 0.09;
-                fx.smoke.emit(
-                    bx, by, bz,
-                    v.x * 0.22 + (Math.random() - 0.5) * 0.8,
-                    1.1 + Math.random() * 0.6,
-                    v.z * 0.22 + (Math.random() - 0.5) * 0.8,
-                    0.5 + Math.random() * 0.25, 1.7,
-                    1.5 + Math.random() * 0.7,
-                    shade, shade, shade, 0.55, true
+                emitBurnTrail(
+                    fx.smoke, P.position, P.facing, P.velocity, this.damage >= 2
                 );
-                if (this.damage >= 2) {
-                    // The fire: a fat tongue of flame off the tail, riding
-                    // most of the craft's own speed so it licks backward
-                    // along the hull — unmissable, which is the point of the
-                    // second stage existing.
-                    fx.smoke.emit(
-                        bx, by - 0.25, bz,
-                        v.x * 0.72 + (Math.random() - 0.5) * 1.2,
-                        0.9 + Math.random() * 0.8,
-                        v.z * 0.72 + (Math.random() - 0.5) * 1.2,
-                        0.62 + Math.random() * 0.25, 1.4,
-                        0.42 + Math.random() * 0.2,
-                        3.2, 1.05, 0.26, 0.8, false
-                    );
-                }
             }
         }
 

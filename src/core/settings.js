@@ -303,6 +303,15 @@ export const S = {
     // testing rather than as reheat tremble. Opt back in from the slider.
     speederTurbulence: 0.0,
     /**
+     * The damage burn, positioned: metres behind the hull the trail sheds,
+     * and metres above the pilot position. "Burn preview" lights the same
+     * smoke-and-fire on the player craft so the sliders can be dialled by
+     * eye instead of waiting for a wingman to be shot down.
+     */
+    burnPreview: false,
+    burnBackZ: 2.4,
+    burnY: 0.95,
+    /**
      * How far the frame inhales on the boost, metres of extra arm, 0 off.
      *
      * While shift is held the spring arm eases out by this much and the FOV
@@ -617,6 +626,9 @@ export const SCHEMA = [
             { k: "jetFlare", l: "Jet flare", t: "f", min: 0.1, max: 4, step: 0.05 },
             { k: "jetGlow", l: "Jet glow", t: "f", min: 0, max: 2, step: 0.02 },
             { k: "jetHaloBack", l: "Halo back-off", t: "f", min: 0, max: 0.5, step: 0.01 },
+            { k: "burnPreview", l: "Burn preview", t: "b" },
+            { k: "burnBackZ", l: "Burn fwd/back", t: "f", min: -2, max: 6, step: 0.05 },
+            { k: "burnY", l: "Burn up/down", t: "f", min: -1.5, max: 3, step: 0.05 },
             { l: "Bolt colour", t: "c", kr: "boltR", kg: "boltG", kb: "boltB" },
             { k: "boltR", l: "Bolt red", t: "f", min: 0, max: 2, step: 0.02 },
             { k: "boltG", l: "Bolt green", t: "f", min: 0, max: 2, step: 0.02 },
