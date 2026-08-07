@@ -886,6 +886,12 @@ async function boot() {
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
     /**
+     * The AT-AT line's advance bearing, latched from the opening line's own
+     * mean heading on the first frame and never recomputed — the formation
+     * marches *that* course for the whole battle, wherever the player goes.
+     */
+    let advanceBearing = null;
+    /**
      * The player's fly-in, or null once they have arrived — set by
      * `startFlyover` alongside the escorts' own staging.
      * @type {{toX:number, toZ:number, heading:number}|null}
@@ -1030,27 +1036,32 @@ async function boot() {
                     for (let i = 0; i < n; i++) all.push(herd.walkers[i]);
                 }
                 const p = character.position;
-                // The line advances as a *formation*: one shared bearing —
-                // the line's centroid toward the player — that every machine
-                // eases its heading toward, each with a slow personal wander
-                // so the line drifts naturally rather than marching a parade.
-                // Parallel courses cannot cross, which is the whole fix; the
-                // steer/tempo/floor below are the belt over these braces.
-                // Machines close to (or past) the player are left on their
-                // own heading — they are marching through to the recycle, and
-                // a formation bearing computed across the player flips.
+                // The line advances as a *formation*: one shared bearing that
+                // every machine eases its heading toward, each with a slow
+                // personal wander so the line drifts naturally rather than
+                // marching a parade. Parallel courses cannot cross, which is
+                // the whole fix; the steer/tempo/floor below are the belt
+                // over these braces.
+                //
+                // The bearing is the line's own, latched *once*: the circular
+                // mean of the opening line's headings, computed on the first
+                // frame and never touched again. Nothing about it ever reads
+                // the player's position — not directly, and not laundered
+                // through recycled machines re-aiming at placement — so the
+                // line can never swing to face them. It marches its course.
                 if (all.length) {
-                    let cx = 0, cz = 0;
-                    for (const w of all) { cx += w.position.x; cz += w.position.z; }
-                    cx /= all.length;
-                    cz /= all.length;
-                    const advance = Math.atan2(p.x - cx, p.z - cz);
+                    if (advanceBearing === null) {
+                        let sx = 0, sz = 0;
+                        for (const w of all) {
+                            sx += Math.sin(w.yaw);
+                            sz += Math.cos(w.yaw);
+                        }
+                        advanceBearing = Math.atan2(sx, sz);
+                    }
                     for (let i = 0; i < all.length; i++) {
                         const w = all[i];
-                        const dp = Math.hypot(p.x - w.position.x, p.z - w.position.z);
-                        if (dp < 80) continue;
                         const wander = Math.sin(time * 0.07 + i * 2.1) * 0.09;
-                        const want = advance + wander;
+                        const want = advanceBearing + wander;
                         w.yaw = wrap(w.yaw + wrap(want - w.yaw) * Math.min(1, dt * 0.5));
                     }
                 }
