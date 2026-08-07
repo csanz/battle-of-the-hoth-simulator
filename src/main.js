@@ -526,6 +526,9 @@ async function boot() {
                 driveHeld: false, boostHeld: false, fireHeld: false,
             };
             const hull = new Speeder(gfx, terrain, sky, shadows, speederAsset2, ctl, null);
+            // A wreck, not a craft: hover, bob and jet all dead, belly laid
+            // slightly under the surface so the snow reads as claiming it.
+            hull.grounded = true;
             hull.registerPrepass(depthPass);
             hull.setVisible(false);
             wrecks.push({
@@ -578,7 +581,7 @@ async function boot() {
                 if (!wk) return;
                 wreckNext = (wreckNext + 1) % wrecks.length;
                 wk.active = true;
-                wk.burnT = 26;
+                wk.burnT = 32;
                 wk.age = 0;
                 wk.smokeT = 0;
                 wk.ctl.position.set(x, 0, z);
@@ -969,7 +972,7 @@ async function boot() {
                 if (wk.smokeT <= 0) {
                     const p = wk.ctl.position;
                     const gy = wk.ctl.groundY;
-                    const heat = Math.min(1, wk.burnT / 26);
+                    const heat = Math.min(1, wk.burnT / 32);
                     wk.smokeT = 0.1 + (1 - heat) * 0.4;
                     smoke.emit(
                         p.x + (Math.random() - 0.5) * 1.4, gy + 1.1,
@@ -979,7 +982,7 @@ async function boot() {
                         0.55, 1.6, 2.0 + Math.random(),
                         0.06, 0.06, 0.06, 0.5 * (0.4 + 0.6 * heat), true
                     );
-                    if (wk.burnT > 10 && Math.random() < 0.7) {
+                    if (wk.burnT > 3 && Math.random() < 0.75) {
                         smoke.emit(
                             p.x, gy + 0.7, p.z,
                             (Math.random() - 0.5) * 0.8, 0.9,
@@ -1007,6 +1010,34 @@ async function boot() {
         //             on a stale bearing, because his bearing is his squad's.
         {
             const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+            // The two AT-AT herds separate across herds exactly as they do
+            // within one: by tempo, never by position — the machine behind
+            // eases off, the one ahead presses on, and the pair strings out
+            // instead of walking through each other. A positional push on
+            // something with legs reads as crabbing; this reads as marching.
+            {
+                const sep = 44 * /** @type {number} */ (S.walkerScale);
+                const n1 = Math.min(walkers.count, walkers.walkers.length);
+                const n2 = Math.min(walkers2.count, walkers2.walkers.length);
+                for (let i = 0; i < n1; i++) {
+                    const A = walkers.walkers[i];
+                    for (let k = 0; k < n2; k++) {
+                        const B = walkers2.walkers[k];
+                        const d = Math.hypot(
+                            A.position.x - B.position.x, A.position.z - B.position.z
+                        );
+                        if (d >= sep) continue;
+                        const crowd = 1 - d / sep;
+                        const p = character.position;
+                        const dA = Math.hypot(p.x - A.position.x, p.z - A.position.z);
+                        const dB = Math.hypot(p.x - B.position.x, p.z - B.position.z);
+                        const behind = dA > dB ? A : B;
+                        const ahead = dA > dB ? B : A;
+                        behind._rateWant -= crowd * 0.3;
+                        ahead._rateWant += crowd * 0.12;
+                    }
+                }
+            }
             // Scouts hold their distance from the armour.
             const an = Math.min(atsts.count, atsts.walkers.length);
             for (const herd of [walkers, walkers2]) {

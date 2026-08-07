@@ -446,7 +446,8 @@ export class Speeder {
     setVisible(v) {
         this._visible = !!v;
         this.mesh.visible = this._visible;
-        this.jet.setVisible(this._visible);
+        // A wreck's repulsors are dead: no plume, however visible the hull.
+        this.jet.setVisible(this._visible && !this.grounded);
         if (!this._visible && this.bolts && this.bolts.mesh) {
             this.bolts.mesh.visible = false;
         }
@@ -498,14 +499,22 @@ export class Speeder {
         // without it here the controller (and the camera chasing it) rises
         // while the hull stays glued to hover height, which reads exactly as
         // "E lifts the camera, not the aircraft".
-        const lift = HOVER + HOVER_SPEED_LIFT * speed01 + (c.climb || 0);
-        let wantY = ground + lift + Math.sin(this._bob) * BOB_HEIGHT * idle;
-        wantY = Math.max(wantY, groundTrack + 1.2);
+        //
+        // Unless the craft is a wreck: `grounded` kills the whole hover — no
+        // lift, no bob, no floor — and lays the belly straight into the snow,
+        // slightly under the surface so the drifts read as already claiming it.
+        const lift = this.grounded
+            ? -0.15
+            : HOVER + HOVER_SPEED_LIFT * speed01 + (c.climb || 0);
+        let wantY = ground + lift
+            + (this.grounded ? 0 : Math.sin(this._bob) * BOB_HEIGHT * idle);
+        if (!this.grounded) wantY = Math.max(wantY, groundTrack + 1.2);
 
         // ---- attitude ------------------------------------------------------
         // Bank off the controller's own lean, which is the same signal the camera
         // banks on — so the horizon and the craft always agree about the turn.
-        let wantRoll = -c.lean * BANK + Math.sin(this._bob * 0.7) * BOB_ROLL * idle;
+        let wantRoll = -c.lean * BANK
+            + (this.grounded ? 0 : Math.sin(this._bob * 0.7) * BOB_ROLL * idle);
 
         // Bank lead: a steer-rate term, so the hull rolls a few degrees *into*
         // the turn ahead of its settling bank and eases back as the lean catches
