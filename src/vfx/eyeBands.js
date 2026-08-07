@@ -52,6 +52,7 @@ export class EyeBands {
                 viewProjection: { value: new THREE.Matrix4() },
                 cameraPos: { value: this._cameraPos },
                 eyeTex: { value: this.texture },
+                time: { value: 0 },
             },
             // Additive light over the face plating, but honestly occluded:
             // the band sits just proud of the viewport and the head's own
@@ -129,8 +130,9 @@ export class EyeBands {
     }
 
     /** Upload the frame's bands; zero added means nothing draws. */
-    commit(cameraPos) {
+    commit(cameraPos, time) {
         if (cameraPos) this._cameraPos.copy(cameraPos);
+        if (time !== undefined) this.material.uniforms.time.value = time;
         for (let i = this._count; i < POOL; i++) this._data[i * 4 + 3] = 0;
         this.texture.needsUpdate = true;
         this.mesh.visible = this._count > 0;

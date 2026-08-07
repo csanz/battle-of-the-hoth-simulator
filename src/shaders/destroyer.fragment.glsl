@@ -48,6 +48,17 @@ void main() {
     vec3 color = HULL * (sunColor * SUN_MUTE * mix(ndl, wrap, 0.35)
         + ambientSky * (0.35 + 0.65 * (N.y * 0.5 + 0.5)));
 
+    // The grain fix. These normals come from screen derivatives, and past a
+    // couple of kilometres the hull's triangles are *subpixel* — every pixel
+    // lands on a different facet and the shading is per-pixel noise, which
+    // the jittered projection then shimmers. Fade the facet term to a flat
+    // hazy tone with distance: at three kilometres the eye reads silhouette,
+    // not panels, and a silhouette does not sparkle.
+    float hullDist = length(cameraPos - vWorld);
+    float farFlat = smoothstep(1100.0, 2400.0, hullDist);
+    vec3 flat3 = HULL * (sunColor * SUN_MUTE * 0.45 + ambientSky * 0.75);
+    color = mix(color, flat3, farFlat);
+
     color = applyAerial(
         color, cameraPos, vWorld, -V, sunDir,
         skyLUT, sunColor,

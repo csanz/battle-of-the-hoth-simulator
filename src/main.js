@@ -200,7 +200,11 @@ async function boot() {
     // re-placed the moment they landed — so they stand half-dissolved in the
     // aerial haze and resolve as they come, well clear of the scouts' band.
     const walkers2 = new WalkerHerd(gfx, terrain, sky, shadows, await walkerReady, rig, {
-        count: () => 2,
+        // The wings follow the Count slider too — one wing from two machines
+        // up, both from three — so dialling the slider visibly changes the
+        // whole line, not just the front rank.
+        count: () => Math.min(2, Math.max(0, Math.round(
+            /** @type {number} */ (S.walkerCount)) - 1)),
         maxCount: () => 2,
         spawnDistance: () => 600,
         respawnDistance: () => 600,
@@ -1285,7 +1289,7 @@ async function boot() {
         eyeBands.begin();
         walkers.collectEyes(eyeBands);
         walkers2.collectEyes(eyeBands);
-        eyeBands.commit(rig.camera.position);
+        eyeBands.commit(rig.camera.position, time);
         // Before the spray: the wake decides where its own lip is, and the
         // grains it sheds have to be in the pool before the pool is uploaded.
         wake.update(dt, rig.camera.position);

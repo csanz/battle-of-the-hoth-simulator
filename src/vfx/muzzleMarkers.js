@@ -84,6 +84,9 @@ export class MuzzleMarkers {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        // Placed entirely by the vertex shader; pin the bounds rather than
+        // letting three derive NaN from the lattice indices.
+        geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
         const mesh = new THREE.Mesh(geometry);
         mesh.name = "muzzleMarkers";
         mesh.metadata = { triangles: POOL * 2, vertices: POOL * 4 };

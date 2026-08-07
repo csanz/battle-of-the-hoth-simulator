@@ -350,15 +350,15 @@ export const S = {
     showDestroyers: true,
     destroyerCount: 3,
     /** Metres above the field. */
-    destroyerAlt: 850,
+    destroyerAlt: 1540,
     /** Metres out along the fleet bearing. */
-    destroyerDist: 2600,
+    destroyerDist: 3200,
     /** Uniform scale on the ~1.5 km hull — forced perspective knob. */
-    destroyerScale: 0.35,
+    destroyerScale: 0.23,
     /** Degrees off the sun's azimuth (where the walkers come from). */
-    destroyerBearing: 175,
+    destroyerBearing: 159,
     /** Formation heading, degrees — turns every hull's profile at once. */
-    destroyerYaw: 55,
+    destroyerYaw: -103,
     /**
      * The AI wingman: a second T-47 flying strafing runs on the walkers.
      * Read at boot to decide whether the craft is built at all (like
@@ -394,9 +394,9 @@ export const S = {
      * metres forward of the face, and a width multiplier. Overlay "Walker"
      * group — dial it on a machine standing close.
      */
-    eyeLift: 0.6,
-    eyeOut: 0.0,
-    eyeSpan: 1.0,
+    eyeLift: 0.8,
+    eyeOut: -0.1,
+    eyeSpan: 0.9,
     /** The chin guns. Off stops the firing and the bolts, not the head tracking. */
     walkerFire: true,
     /**

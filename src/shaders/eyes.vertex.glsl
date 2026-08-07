@@ -15,6 +15,7 @@ uniform sampler2D eyeTex;
 
 out vec2 vUV;
 out float vFade;
+out float vSeed;
 
 void main() {
     int id = int(position.x + 0.5);
@@ -43,6 +44,7 @@ void main() {
         + b.xyz * (position.y * a.w)
         + up * (position.z * b.w);
     vUV = position.yz;
+    vSeed = float(id);
 
     vec4 clip = viewProjection * vec4(world, 1.0);
     gl_Position = dead ? vec4(0.0, 0.0, -2.0, 1.0) : clip;
