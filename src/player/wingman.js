@@ -175,7 +175,6 @@ class SimPilot {
          *  wreck for `_wreckT` seconds before `respawn` refills the seat. */
         this.downed = false;
         this.crashed = false;
-        this._wreckT = 0;
 
         this._pickRunPoint();
     }
@@ -333,32 +332,39 @@ class SimPilot {
         const dt = Math.min(rawDt || 0, 1 / 30);
         if (dt <= 0) return;
 
-        // The wreck: down in the snow, sliding to a stop, burning. The hull
-        // is drawn from terrain + hover + climb, so a negative climb is what
-        // actually grounds it. When the timer runs out the seat refills.
-        if (this._wreckT > 0) {
-            this._wreckT -= dt;
-            const skid = Math.max(0, 1 - dt * 2.2);
-            this.velocity.x *= skid;
-            this.velocity.z *= skid;
+        // Going down: a flat spin, the hull rocking on its skids, momentum
+        // bleeding off, the deck coming up. Owns the whole update — a craft
+        // in a death spiral is not flying its phase machine.
+        if (this.downed) {
+            this._downT = (this._downT ?? 0) + dt;
+            const bleed = Math.max(0, 1 - dt * 0.35);
+            this.velocity.x *= bleed;
+            this.velocity.z *= bleed;
             this.position.x += this.velocity.x * dt;
             this.position.z += this.velocity.z * dt;
+            this.facing = wrapAngle(this.facing + (this._spin || 1.6) * dt);
+            this.lean = Math.sin(this._downT * 5) * 0.85;
+            this.steerRate = 0;
+            const s = Math.hypot(this.velocity.x, this.velocity.z);
+            this.speed01 = Math.min(1, s / 19.5);
+            this.speedRaw = s / 19.5;
+            this.driveHeld = false;
+            this.boostHeld = false;
+            this.fireHeld = false;
             this.groundY = this.terrain && this.terrain.heightAt
                 ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
             this.pathY = this.groundY;
             this.lift01 = 0;
-            this.climb = expDamp(this.climb, -1.9, 3, dt);
-            this.position.y = this.groundY + 2.6 + this.climb;
-            const s = Math.hypot(this.velocity.x, this.velocity.z);
-            this.speed01 = Math.min(1, s / 19.5);
-            this.speedRaw = this.speed01;
-            this.driveHeld = false;
-            this.boostHeld = false;
-            this.fireHeld = false;
-            // Settled on one skid, slightly over: a wreck lies at an angle.
-            this.lean = expDamp(this.lean, 0.35, 2.0, dt);
-            this.steerRate = 0;
-            if (this._wreckT <= 0) this.respawn();
+            this.climb = expDamp(this.climb, -4, 0.9, dt);
+            this.position.y = Math.max(
+                this.groundY + 2.6 + this.climb, this.groundY + 0.3
+            );
+            if (this.position.y - this.groundY < 1.1) {
+                // Ground contact. The wreck pool takes the hull from here —
+                // this pilot's seat refills immediately from deep.
+                this.crashed = true;
+                this.downed = false;
+            }
             return;
         }
 
@@ -570,23 +576,6 @@ class SimPilot {
         this.lift01 = this._lift;
         const base = this.groundY + (this._cruiseGround - this.groundY) * this._lift;
         this.pathY = base;
-        if (this.downed) {
-            // Power dying: the climb bleeds below the deck, the clearance
-            // floor stops holding, and ground contact latches the crash and
-            // starts the wreck clock — the airframe stays down, burning,
-            // before this seat's replacement flies in from deep.
-            this._speedTarget = Math.min(this._speedTarget, 24);
-            this.climb = expDamp(this.climb, -4, 0.9, dt);
-            this.position.y = Math.max(
-                base + 2.6 + this.climb, this.groundY + 0.3
-            );
-            if (this.position.y - this.groundY < 1.1) {
-                this.crashed = true;
-                this.downed = false;
-                this._wreckT = 13;
-            }
-            return;
-        }
         this.climb = expDamp(this.climb, this._climbWant, 2.4, dt);
         // Floored against the raw ground so a man-height run over a dune the
         // smoothed line cut through still clears the crest.
@@ -641,7 +630,11 @@ export class Wingman {
                 2.8, 1.0, 0.28, 0.6, false
             );
         }
-        if (this.damage >= 3) P.downed = true;
+        if (this.damage >= 3) {
+            P.downed = true;
+            P._downT = 0;
+            P._spin = (Math.random() < 0.5 ? -1 : 1) * (1.3 + Math.random() * 1.2);
+        }
     }
 
     /**
@@ -656,8 +649,12 @@ export class Wingman {
         const P = this.pilot;
         if (this._hitGrace > 0) this._hitGrace -= dt;
 
-        const flying = !P.downed && P._wreckT <= 0;
-        if (this.damage < 3 && this._hitGrace <= 0 && flying) {
+        // One ship at a time: the raid shares a fate token, and only the
+        // seat holding it can be hit at all. It passes on after the crash —
+        // the field never has two escorts falling out of the sky at once.
+        const myTurn = !fx.raid || fx.raid.turn === (this.pilot._seat ?? 0);
+        const flying = !P.downed;
+        if (this.damage < 3 && this._hitGrace <= 0 && flying && myTurn) {
             // A literal bolt through hull space always counts...
             let hit = false;
             for (const pool of fx.enemy) {
@@ -722,21 +719,19 @@ export class Wingman {
             }
         }
 
-        // Ground contact: the burst, the crater, the sound — and then the
-        // airframe *stays*, a wreck in the snow shedding smoke and fire
-        // (damage holds at 2 so the trail keeps burning) until the pilot's
-        // wreck clock runs out and the seat's replacement flies in.
+        // Ground contact: the burst, the crater, the sound. The wreck pool
+        // takes over the hull on the ground (and the pilot thrown beside it);
+        // this seat's craft respawns from deep, and the fate token passes to
+        // the next ship in the raid.
         if (P.crashed) {
             P.crashed = false;
-            fx.onCrash?.(P.position.x, P.position.y, P.position.z);
-            this.damage = 2;
-        }
-        if (this._wasWreck && P._wreckT <= 0) {
+            fx.onCrash?.(P.position.x, P.position.y, P.position.z, P.facing);
             this.damage = 0;
             this._hitGrace = 6;
             this._fateT = 9 + Math.random() * 9;
+            if (fx.raid) fx.raid.turn = (fx.raid.turn + 1) % (fx.raid.size || 3);
+            P.respawn();
         }
-        this._wasWreck = P._wreckT > 0;
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */

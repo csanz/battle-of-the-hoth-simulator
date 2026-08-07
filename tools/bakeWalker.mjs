@@ -380,12 +380,24 @@ for (const foot of feet) {
         slideSamples++;
     }
 }
-if (!slideSamples) throw new Error("no planted-foot samples; cannot derive speed");
-slideSpeed /= slideSamples;
-const slideLen = Math.hypot(slide[0], slide[1]) || 1;
-// Forward is where the slide points *away from*.
-const fwd = [-slide[0] / slideLen, -slide[1] / slideLen];
-console.log(`slide: dir [${fwd[0].toFixed(2)}, ${fwd[1].toFixed(2)}], ${slideSpeed.toFixed(3)} glTF units/s`);
+// `--static`: a model whose clip is not locomotion (a death, an idle) has no
+// planted-foot slide to derive anything from — speed is zero and the authored
+// facing stands.
+let fwd;
+if (!slideSamples) {
+    if (!("static" in flags)) {
+        throw new Error("no planted-foot samples; cannot derive speed (or pass --static)");
+    }
+    slideSpeed = 0;
+    fwd = [0, 1];
+    console.log("static bake: speed 0, authored facing kept");
+} else {
+    slideSpeed /= slideSamples;
+    const slideLen = Math.hypot(slide[0], slide[1]) || 1;
+    // Forward is where the slide points *away from*.
+    fwd = [-slide[0] / slideLen, -slide[1] / slideLen];
+    console.log(`slide: dir [${fwd[0].toFixed(2)}, ${fwd[1].toFixed(2)}], ${slideSpeed.toFixed(3)} glTF units/s`);
+}
 
 // Rotation about Y taking `fwd` to -Z, so the z mirror that follows lands the
 // nose on +Z — the demo's forward. Rotating straight to +Z reads as correct
@@ -591,18 +603,18 @@ const header = {
     boneCount,
     frameCount,
     duration,
-    // Where each clip's frames live in the anim table. Absent (or length 1) on
-    // single-clip models — the loader treats the whole table as the cycle.
-    ...(clips.length > 1 && {
-        clips: (() => {
-            let f0 = 0;
-            return clips.map((c) => {
-                const e = { name: c.name, frame0: f0, frameCount: c.frameCount, duration: c.duration };
-                f0 += c.frameCount;
-                return e;
-            });
-        })(),
-    }),
+    // Where each clip's frames live in the anim table — always written, so a
+    // single-clip model's one clip is still addressable by name for the
+    // runtime's one-shot machinery (a corpse holds its death, it does not
+    // loop it).
+    clips: (() => {
+        let f0 = 0;
+        return clips.map((c) => {
+            const e = { name: c.name, frame0: f0, frameCount: c.frameCount, duration: c.duration };
+            f0 += c.frameCount;
+            return e;
+        });
+    })(),
     speed,
     height,
     bounds,

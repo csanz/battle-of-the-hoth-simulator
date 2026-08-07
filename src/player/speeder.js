@@ -770,8 +770,9 @@ export class Speeder {
         // Live off the setting so it can be dialled against the actual frame
         // rather than argued about in the abstract.
         u.ambientIntensity.value = S.ambientIntensity * S.speederAmbient;
-        // No rime on a craft that is moving and warm.
-        u.snowCover.value = 0;
+        // No rime on a craft that is moving and warm — but a wreck cooling in
+        // the snow frosts over, slowly, through this override.
+        u.snowCover.value = this.snowOverride ?? 0;
         // Debug modes bypass the shading entirely — see `debugView` in
         // walker.fragment.glsl. The gain undoes the exposure the post chain is
         // about to apply, so a raw value of 1.0 reads as white rather than grey.

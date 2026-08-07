@@ -96,6 +96,8 @@ async function boot() {
     // and so does the infantry walking beside it.
     const atstReady = loadWalkerAsset("models/atst");
     const trooperReady = loadWalkerAsset("models/trooper");
+    // The crash-site pilot — one death clip, played once and held.
+    const pilotReady = loadWalkerAsset("models/pilot");
     // Only when it is actually going to fly. Off — which is the default — the
     // speeder costs nothing at all: no fetch, no decode, no pipeline.
     const FLYING = S.speeder === true;
@@ -358,6 +360,34 @@ async function boot() {
         troopers.setVisible(v);
     });
 
+    // ------------------------------------------------------- the crash sites
+    // Three wreck slots (one per seat) and the pilots thrown from them. A
+    // slot is claimed at ground contact and *kept* — the hull stays sunk in
+    // the snow, burning down and slowly frosting over, until its seat crashes
+    // again and reclaims it.
+    /** @type {{hull:any, ctl:any, active:boolean, burnT:number, age:number,
+     *          smokeT:number, pilotX:number, pilotZ:number}[]} */
+    const wrecks = [];
+    const pilotAsset = await pilotReady;
+    const pilots = new WalkerHerd(gfx, terrain, sky, shadows, pilotAsset, rig, {
+        count: () => wrecks.reduce((n, w) => n + (w.active ? 1 : 0), 0),
+        maxCount: () => 3,
+        scale: () => 1,
+        // A body does not pace itself to anything.
+        speed: () => 0,
+        snow: () => 0.35,
+        visible: () => S.showWingman !== false,
+        fire: () => false,
+        headLook: () => false,
+        separation: () => 0.01,
+        sink: () => 0.08,
+        anchor: (i) => {
+            const w = wrecks[i];
+            return w && w.active ? { x: w.pilotX, z: w.pilotZ } : null;
+        },
+    });
+    pilots.registerPrepass(depthPass);
+
     // Airborne snow: footfall kick now, the surf plume and spell spray later.
     const spray = new SprayField(gfx, terrain, sky, shadows);
     // Shellbursts where the cannon fire lands close to the fight — the Hoth
@@ -482,12 +512,39 @@ async function boot() {
     // spaced by a grace window so the stages play out: black smoke, then fire,
     // then the third puts it into the snow — fireball, crater, a heavy kick of
     // thrown snow, and a fresh airframe brought in from deep for that seat.
+    // The graveyard hulls: one frozen Speeder per seat, posed by the crash
+    // and left there. Built only when there are wingmen to lose.
+    if (wingmen.length) {
+        const speederAsset2 = await speederReady;
+        for (let i = 0; i < 3; i++) {
+            const ctl = {
+                position: new THREE.Vector3(0, -500, 0),
+                velocity: new THREE.Vector3(),
+                facing: 0, lean: 0.32, steerRate: 0,
+                speed01: 0, speedRaw: 0,
+                climb: -2.35, lift01: 0, pathY: 0, groundY: 0,
+                driveHeld: false, boostHeld: false, fireHeld: false,
+            };
+            const hull = new Speeder(gfx, terrain, sky, shadows, speederAsset2, ctl, null);
+            hull.registerPrepass(depthPass);
+            hull.setVisible(false);
+            wrecks.push({
+                hull, ctl, active: false, burnT: 0, age: 0, smokeT: 0,
+                pilotX: 0, pilotZ: 0,
+            });
+        }
+    }
+    let wreckNext = 0;
+
     const enemyFire = [walkers.bolts, walkers2.bolts, atsts.bolts, troopers.bolts];
+    // The shared fate token: one ship wounded and falling at a time, ever.
+    const raid = { turn: 0, size: Math.max(1, wingmen.length) };
     for (const w of wingmen) {
         w.effects = {
             smoke,
             enemy: enemyFire,
-            onCrash: (x, y, z) => {
+            raid,
+            onCrash: (x, y, z, facing) => {
                 explosions.impact(x, y, z, true, true);
                 // The report, at the level and the delay its distance earns —
                 // the same physics the cannons obey.
@@ -499,7 +556,13 @@ async function boot() {
                     gain: cn * cn * cn,
                     delay: Math.min(1.6, cd / 343),
                 });
+                // The arrival scar: the crater it dug and the trench it
+                // ploughed getting there.
                 terrain.deform.brush(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
+                terrain.deform.brush(
+                    x - Math.sin(facing) * 4.5, z - Math.cos(facing) * 4.5,
+                    2.4, 0.5, 0.55, 1.0, 0.3, facing, 3.0, 1.0
+                );
                 for (let k = 0; k < 42; k++) {
                     const a = Math.random() * Math.PI * 2;
                     const out = 3 + Math.random() * 9;
@@ -509,6 +572,38 @@ async function boot() {
                         0.05 + Math.random() * 0.08, 0.8 + Math.random() * 1.2,
                         Math.random() < 0.4 ? 1 : 0, 1.2
                     );
+                }
+                // Claim a wreck slot: the hull stays, sunk to its skids.
+                const wk = wrecks[wreckNext];
+                if (!wk) return;
+                wreckNext = (wreckNext + 1) % wrecks.length;
+                wk.active = true;
+                wk.burnT = 26;
+                wk.age = 0;
+                wk.smokeT = 0;
+                wk.ctl.position.set(x, 0, z);
+                wk.ctl.facing = facing;
+                wk.ctl.lean = (Math.random() < 0.5 ? -1 : 1)
+                    * (0.25 + Math.random() * 0.15);
+                wk.ctl.groundY = terrain.heightAt(x, z);
+                wk.ctl.pathY = wk.ctl.groundY;
+                wk.hull.snowOverride = 0;
+                wk.hull.setVisible(true);
+                // The pilot, thrown clear — a little away from the ship, off
+                // to the side of the skid line.
+                const side = facing + (Math.random() < 0.5 ? 1 : -1)
+                    * (0.9 + Math.random() * 0.7);
+                const throwOut = 7 + Math.random() * 3;
+                wk.pilotX = x + Math.sin(side) * throwOut;
+                wk.pilotZ = z + Math.cos(side) * throwOut;
+                const slot = wrecks.indexOf(wk);
+                pilots.setCount(wrecks.reduce((n2, q) => n2 + (q.active ? 1 : 0), 0));
+                const body = pilots.walkers[slot];
+                if (body) {
+                    pilots.place(body, character.position);
+                    body.yaw = Math.random() * Math.PI * 2;
+                    body.oneshot = null;
+                    body.react("Death From Back Headshot", { hold: true, linger: 1e9 });
                 }
             },
         };
@@ -614,6 +709,8 @@ async function boot() {
     atsts.onMaterial = (m) => spells.addConsumers(m);
     for (const w of atsts.walkers) spells.addConsumers(w.material);
     troopers.onMaterial = (m) => spells.addConsumers(m);
+    pilots.onMaterial = (m) => spells.addConsumers(m);
+    for (const w of pilots.walkers) spells.addConsumers(w.material);
     for (const w of troopers.walkers) spells.addConsumers(w.material);
     spells.registerPrepass(depthPass);
 
@@ -744,6 +841,8 @@ async function boot() {
     await atsts.warmUp();
     troopers.sync(rig.camera.position);
     await troopers.warmUp();
+    pilots.sync(rig.camera.position);
+    await pilots.warmUp();
     destroyers.update(character.position, rig.camera.position);
     await destroyers.warmUp();
     if (speeder) {
@@ -857,6 +956,43 @@ async function boot() {
         walkers2.update(dt, character.position);
         atsts.update(dt, character.position);
         troopers.update(dt, character.position);
+        pilots.update(dt, character.position);
+        // The crash sites burn down and freeze over: smoke and fire for the
+        // first half minute, thinning as the heat dies, and then the slow
+        // frost — the hull whitening into the field over a couple of minutes.
+        for (const wk of wrecks) {
+            if (!wk.active) continue;
+            wk.age += dt;
+            if (wk.burnT > 0) {
+                wk.burnT -= dt;
+                wk.smokeT -= dt;
+                if (wk.smokeT <= 0) {
+                    const p = wk.ctl.position;
+                    const gy = wk.ctl.groundY;
+                    const heat = Math.min(1, wk.burnT / 26);
+                    wk.smokeT = 0.1 + (1 - heat) * 0.4;
+                    smoke.emit(
+                        p.x + (Math.random() - 0.5) * 1.4, gy + 1.1,
+                        p.z + (Math.random() - 0.5) * 1.4,
+                        (Math.random() - 0.5) * 0.5, 1.2 + Math.random() * 0.8,
+                        (Math.random() - 0.5) * 0.5,
+                        0.55, 1.6, 2.0 + Math.random(),
+                        0.06, 0.06, 0.06, 0.5 * (0.4 + 0.6 * heat), true
+                    );
+                    if (wk.burnT > 10 && Math.random() < 0.7) {
+                        smoke.emit(
+                            p.x, gy + 0.7, p.z,
+                            (Math.random() - 0.5) * 0.8, 0.9,
+                            (Math.random() - 0.5) * 0.8,
+                            0.4, 0.8, 0.3 + Math.random() * 0.15,
+                            3.0, 1.0, 0.24, 0.7 * heat, false
+                        );
+                    }
+                }
+            }
+            wk.hull.snowOverride = Math.min(1, wk.age / 150);
+            wk.hull.update(dt);
+        }
         buzzTroopers();
         // ---- formation discipline ------------------------------------------
         // The herd machinery aims a machine once and never corrects — right
@@ -971,6 +1107,10 @@ async function boot() {
         walkers2.sync(rig.camera.position);
         atsts.sync(rig.camera.position);
         troopers.sync(rig.camera.position);
+        pilots.sync(rig.camera.position);
+        for (const wk of wrecks) {
+            if (wk.active) wk.hull.sync(rig.camera.position);
+        }
         speeder?.sync(rig.camera.position);
         for (const w of wingmen) w.sync(rig.camera.position);
         // The fleet holds formation on the player; three matrix writes.
@@ -1023,6 +1163,7 @@ async function boot() {
             walkers2.triangles +
             atsts.triangles +
             troopers.triangles +
+            pilots.triangles +
             (wake.mesh && wake.mesh.visible ? wake.mesh.metadata.triangles : 0) +
             spells.triangles +
             spray.liveCount * 2;
@@ -1084,7 +1225,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers, explosions,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, pilots, wrecks, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers, explosions,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,
