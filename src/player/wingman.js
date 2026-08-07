@@ -332,22 +332,22 @@ class SimPilot {
         const dt = Math.min(rawDt || 0, 1 / 30);
         if (dt <= 0) return;
 
-        // Going down: a spiral dive, the way an aircraft actually goes in —
-        // one wing drops and *stays* dropped, the bank deepening, the heading
-        // curving into the turn, the momentum carrying the machine toward
-        // wherever it was going to die (a point near the walker line, chosen
-        // at the killing hit). Owns the whole update.
+        // Going down: the machine *rolls* — continuously, around its own long
+        // axis, the way a crippled aircraft rolls over and over on the way
+        // in — while its momentum carries it toward wherever it is going to
+        // die (a clear spot near the walker line, chosen at the killing hit).
+        // Owns the whole update.
         if (this.downed) {
             this._downT = (this._downT ?? 0) + dt;
             const dir = this._spinDir || 1;
-            // The bank commits: no rocking back, just deeper.
-            this._bank = Math.min(2.1, (this._bank || 0.35) + dt * 0.85);
-            this.lean = dir * this._bank;
-            // The spiral: heading curves with the bank, the way a wing-low
-            // machine's nose follows its dropped wing around.
-            this.facing = wrapAngle(
-                this.facing + dir * (0.35 + this._bank * 0.55) * dt
-            );
+            // The roll accelerates as control bleeds away: a slow wing-over
+            // becoming a full rotation every couple of seconds. `lean` maps
+            // to roll through the presentation's bank gain, so a steadily
+            // growing lean *is* a continuous roll.
+            this._rollRate = Math.min(2.4, (this._rollRate || 0.6) + dt * 0.45);
+            this.lean += dir * (this._rollRate / 0.62) * dt;
+            // The heading barely moves — it is rolling, not turning.
+            this.facing = wrapAngle(this.facing + dir * 0.12 * dt);
             this.steerRate = 0;
             // Momentum bends toward the crash point — not steering, just the
             // arc the machine was always going to describe.
@@ -652,28 +652,15 @@ export class Wingman {
         if (this.damage >= 3) {
             P.downed = true;
             P._downT = 0;
-            P._bank = 0.35;
+            P._rollRate = 0.6;
             P._spinDir = Math.random() < 0.5 ? -1 : 1;
-            // Where it goes in: a spot near the walker line, so the crashes
-            // land in the battle rather than out on some empty dune.
-            const herd = P.walkers;
-            let best = null;
-            let bd = Infinity;
-            if (herd && herd.walkers) {
-                const n = Math.min(herd.count, herd.walkers.length);
-                for (let i = 0; i < n; i++) {
-                    const w = herd.walkers[i];
-                    const d = Math.hypot(
-                        w.position.x - P.position.x, w.position.z - P.position.z
-                    );
-                    if (d < bd) { bd = d; best = w; }
-                }
-            }
-            const ang = Math.random() * Math.PI * 2;
-            const r = 32 + Math.random() * 34;
-            if (best) {
-                P._crashX = best.position.x + Math.sin(ang) * r;
-                P._crashZ = best.position.z + Math.cos(ang) * r;
+            // Where it goes in: near the walker line but *clear of it* — the
+            // site picker (main's, which sees both herds) guarantees open
+            // snow, never a machine's legs.
+            const site = this.effects?.crashSite?.(P.position.x, P.position.z);
+            if (site) {
+                P._crashX = site.x;
+                P._crashZ = site.z;
             } else {
                 P._crashX = P.position.x + Math.sin(P.facing) * 130;
                 P._crashZ = P.position.z + Math.cos(P.facing) * 130;

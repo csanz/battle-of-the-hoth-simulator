@@ -24,7 +24,13 @@ uniform float aerialStrength;
 
 layout(location = 0) out vec4 fragColor;
 
-const vec3 HULL = vec3(0.38, 0.40, 0.44);
+const vec3 HULL = vec3(0.30, 0.32, 0.36);
+// Direct sun on the hull, muted hard: at three kilometres through this much
+// air the beam has no business lighting panels like noon — the fleet should
+// read as hazy silhouette from every bearing, not just the backlit one.
+// Front-lit at full sunColor it blew out, and the bloom smeared the blowout
+// into the "blurry, pixelated" fleet.
+const float SUN_MUTE = 0.30;
 
 void main() {
     // Flat facets from the surface itself. The cross's sign depends on
@@ -39,7 +45,7 @@ void main() {
     // and a hemisphere weight on the ambient so the underside reads dark
     // against the bright sky behind it.
     float wrap = clamp((dot(N, sunDir) + 0.25) / 1.25, 0.0, 1.0);
-    vec3 color = HULL * (sunColor * mix(ndl, wrap, 0.35)
+    vec3 color = HULL * (sunColor * SUN_MUTE * mix(ndl, wrap, 0.35)
         + ambientSky * (0.35 + 0.65 * (N.y * 0.5 + 0.5)));
 
     color = applyAerial(
