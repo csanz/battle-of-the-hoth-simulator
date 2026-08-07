@@ -277,6 +277,53 @@ async function boot() {
     // pinned to the walkers' like everything else on this field, so the
     // whole advance moves as one line.
     const trooperAsset = await trooperReady;
+
+    /** Push a point straight out of every AT-AT's keep-clear radius. */
+    const clearOfWalkers = (p, min) => {
+        for (const herd of [walkers, walkers2]) {
+            const wn = Math.min(herd.count, herd.walkers.length);
+            for (let k = 0; k < wn; k++) {
+                const W = herd.walkers[k];
+                const dx = p.x - W.position.x;
+                const dz = p.z - W.position.z;
+                const d = Math.hypot(dx, dz);
+                if (d < min && d > 1e-3) {
+                    p.x = W.position.x + (dx / d) * min;
+                    p.z = W.position.z + (dz / d) * min;
+                }
+            }
+        }
+        return p;
+    };
+
+    /**
+     * Where trooper `i` belongs *right now*: a lane in the wedge behind its
+     * scout, kept out of the walkers' keep-clear. One function, three
+     * callers — placement, re-entry, and the per-frame formation follow —
+     * so a soldier's station is never two different opinions.
+     */
+    const trooperStation = (i) => {
+        const n = Math.min(atsts.count, atsts.walkers.length);
+        if (!n) return null;
+        const host = atsts.walkers[Math.floor(i / 5) % n];
+        const station = i % 5;
+        // The whole squad marches *behind* its scout: infantry follows
+        // armour, it does not screen it. Five lanes fanned across the
+        // scout's six, staggered in depth so the squad reads as a loose
+        // wedge trailing the hull rather than a rank — with a little
+        // per-squad twist so two escorts do not read as copies.
+        const lane = station - 2; // -2..2 across the line of advance
+        const back = host.yaw + Math.PI
+            + lane * 0.26 + (Math.floor(i / 5) % 3 - 1) * 0.12;
+        const r = 10 + Math.abs(lane) * 2.5 + (station % 2) * 3;
+        const p = clearOfWalkers({
+            x: host.position.x + Math.sin(back) * r,
+            z: host.position.z + Math.cos(back) * r,
+        }, 30 * /** @type {number} */ (S.walkerScale));
+        p.host = host;
+        return p;
+    };
+
     const troopers = new WalkerHerd(gfx, terrain, sky, shadows, trooperAsset, rig, {
         count: () => Math.min(30, Math.round(5 * /** @type {number} */ (S.atstCount))),
         maxCount: () => 30,
@@ -303,42 +350,7 @@ async function boot() {
         headLook: () => false,
         separation: () => 2.2,
         sink: () => 0.12,
-        anchor: (i) => {
-            const n = Math.min(atsts.count, atsts.walkers.length);
-            if (!n) return null;
-            const host = atsts.walkers[Math.floor(i / 5) % n];
-            const station = i % 5;
-            // The whole squad marches *behind* its scout: infantry follows
-            // armour, it does not screen it. Five lanes fanned across the
-            // scout's six, staggered in depth so the squad reads as a loose
-            // wedge trailing the hull rather than a rank — with a little
-            // per-squad twist so two escorts do not read as copies.
-            const lane = station - 2; // -2..2 across the line of advance
-            const back = host.yaw + Math.PI
-                + lane * 0.26 + (Math.floor(i / 5) % 3 - 1) * 0.12;
-            const r = 10 + Math.abs(lane) * 2.5 + (station % 2) * 3;
-            const p = {
-                x: host.position.x + Math.sin(back) * r,
-                z: host.position.z + Math.cos(back) * r,
-            };
-            // Never under the walkers: a station that lands inside an
-            // AT-AT's footprint radius is pushed straight out of it.
-            for (const herd of [walkers, walkers2]) {
-                const wn = Math.min(herd.count, herd.walkers.length);
-                for (let k = 0; k < wn; k++) {
-                    const W = herd.walkers[k];
-                    const dx = p.x - W.position.x;
-                    const dz = p.z - W.position.z;
-                    const d = Math.hypot(dx, dz);
-                    const min = 26 * /** @type {number} */ (S.walkerScale);
-                    if (d < min && d > 1e-3) {
-                        p.x = W.position.x + (dx / d) * min;
-                        p.z = W.position.z + (dz / d) * min;
-                    }
-                }
-            }
-            return p;
-        },
+        anchor: (i) => trooperStation(i),
     });
     troopers.registerPrepass(depthPass);
     onChange("showAtst", (v) => {
@@ -846,21 +858,68 @@ async function boot() {
         atsts.update(dt, character.position);
         troopers.update(dt, character.position);
         buzzTroopers();
-        // The infantry gives way: a soldier has no business under a walker's
-        // feet, so anyone drifting inside a hull's footprint is eased straight
-        // out of it — sideways pressure, not a teleport, so the walk survives.
+        // ---- formation discipline ------------------------------------------
+        // The herd machinery aims a machine once and never corrects — right
+        // for a walker crossing a field, wrong for an escort that belongs to
+        // something. Every frame:
+        //
+        //   scouts    ease straight out of the walkers' keep-clear, so the
+        //             lines never merge however the columns converge.
+        //   troopers  *steer* — far from their squad station they turn toward
+        //             it and press the pace; near it they fall in on the
+        //             scout's own heading. A soldier can no longer march off
+        //             on a stale bearing, because his bearing is his squad's.
         {
-            const tn = Math.min(troopers.count, troopers.walkers.length);
+            const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+            // Scouts hold their distance from the armour.
+            const an = Math.min(atsts.count, atsts.walkers.length);
             for (const herd of [walkers, walkers2]) {
                 const wn = Math.min(herd.count, herd.walkers.length);
-                for (let i = 0; i < tn; i++) {
-                    const t = troopers.walkers[i];
+                for (let i = 0; i < an; i++) {
+                    const a2 = atsts.walkers[i];
+                    for (let k = 0; k < wn; k++) {
+                        const W = herd.walkers[k];
+                        const dx = a2.position.x - W.position.x;
+                        const dz = a2.position.z - W.position.z;
+                        const d = Math.hypot(dx, dz);
+                        const min = 42 * /** @type {number} */ (S.walkerScale);
+                        if (d < min && d > 1e-3) {
+                            const push = (min - d) * Math.min(1, dt * 3.2);
+                            a2.position.x += (dx / d) * push;
+                            a2.position.z += (dz / d) * push;
+                        }
+                    }
+                }
+            }
+            // The squads fall in on their stations.
+            const tn = Math.min(troopers.count, troopers.walkers.length);
+            for (let i = 0; i < tn; i++) {
+                const t = troopers.walkers[i];
+                if (t.oneshot) continue;
+                const st = trooperStation(i);
+                if (st) {
+                    const dx = st.x - t.position.x;
+                    const dz = st.z - t.position.z;
+                    const d = Math.hypot(dx, dz);
+                    // Heading: to the station when adrift, the scout's own
+                    // when in place. Eased — a soldier turns, he does not snap.
+                    const want = d > 5 ? Math.atan2(dx, dz) : st.host.yaw;
+                    t.yaw = wrap(t.yaw + wrap(want - t.yaw) * Math.min(1, dt * 2.0));
+                    // Tempo: press to catch a station that has pulled ahead,
+                    // ease off when overshooting past it. Written onto the
+                    // herd's own trim so the feet stay planted at any pace.
+                    const ahead = dx * Math.sin(t.yaw) + dz * Math.cos(t.yaw);
+                    t._rateWant += Math.max(-0.35, Math.min(0.6, ahead / 18));
+                }
+                // And never under a walker, whatever the station says.
+                for (const herd of [walkers, walkers2]) {
+                    const wn = Math.min(herd.count, herd.walkers.length);
                     for (let k = 0; k < wn; k++) {
                         const W = herd.walkers[k];
                         const dx = t.position.x - W.position.x;
                         const dz = t.position.z - W.position.z;
                         const d = Math.hypot(dx, dz);
-                        const min = 17 * /** @type {number} */ (S.walkerScale);
+                        const min = 24 * /** @type {number} */ (S.walkerScale);
                         if (d < min && d > 1e-3) {
                             const push = (min - d) * Math.min(1, dt * 2.2);
                             t.position.x += (dx / d) * push;
