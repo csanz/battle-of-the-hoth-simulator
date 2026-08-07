@@ -547,41 +547,20 @@ async function boot() {
             smoke,
             enemy: enemyFire,
             raid,
-            // Where a dying ship should go in: beside the line, never on it.
-            // Candidates ring the nearest walker and must clear every machine
-            // in both herds — at its position *now* and where its march will
-            // have carried it by the time the spiral lands — so a crash can
-            // never thread a walker's legs.
-            crashSite: (px, pz) => {
-                const all = [];
-                for (const herd of [walkers, walkers2]) {
-                    const n = Math.min(herd.count, herd.walkers.length);
-                    for (let i = 0; i < n; i++) all.push(herd.walkers[i]);
-                }
-                if (!all.length) return null;
-                let best = all[0];
-                let bd = Infinity;
-                for (const w2 of all) {
-                    const d = Math.hypot(w2.position.x - px, w2.position.z - pz);
-                    if (d < bd) { bd = d; best = w2; }
-                }
-                for (let tries = 0; tries < 14; tries++) {
-                    const ang = Math.random() * Math.PI * 2;
-                    const r = 55 + Math.random() * 35;
-                    const cx = best.position.x + Math.sin(ang) * r;
-                    const cz = best.position.z + Math.cos(ang) * r;
-                    let clear = true;
-                    for (const w2 of all) {
-                        const fx2 = Math.sin(w2.yaw) * 26;
-                        const fz2 = Math.cos(w2.yaw) * 26;
-                        if (
-                            Math.hypot(w2.position.x - cx, w2.position.z - cz) < 52 ||
-                            Math.hypot(w2.position.x + fx2 - cx, w2.position.z + fz2 - cz) < 52
-                        ) { clear = false; break; }
-                    }
-                    if (clear) return { x: cx, z: cz };
-                }
-                return null;
+            // The killing hit: a burst on the airframe itself, in the air —
+            // the fireball the dying machine then flies out of. The volume's
+            // centre normally sits LIFT above a ground impact, so the y is
+            // walked down to land the burst at hull height.
+            onKillHit: (x, y, z) => {
+                explosions.impact(x, y - 2.4, z, true, true);
+                const kd = Math.hypot(
+                    x - character.position.x, z - character.position.z
+                );
+                const kn = Math.max(0, 1 - kd / 420);
+                audio.play("speederCrash", {
+                    gain: kn * kn * kn * 0.55,
+                    delay: Math.min(1.6, kd / 343),
+                });
             },
             onCrash: (x, y, z, facing) => {
                 explosions.impact(x, y, z, true, true);
@@ -623,6 +602,23 @@ async function boot() {
                         Math.cos(a) * out, 1.5 + Math.random() * 2.5, Math.sin(a) * out,
                         0.05 + Math.random() * 0.06, 0.6 + Math.random() * 0.6,
                         1, 1.6
+                    );
+                }
+                // The smoke ball: a fat black cloud boiling up off the
+                // impact, then *shrinking* — negative growth — as it thins
+                // and lets go over the next ten seconds.
+                for (let k = 0; k < 14; k++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const rr = Math.random() * 1.8;
+                    smoke.emit(
+                        x + Math.cos(a) * rr, y + 1.2 + Math.random() * 2.2,
+                        z + Math.sin(a) * rr,
+                        (Math.random() - 0.5) * 1.2,
+                        0.7 + Math.random() * 1.4,
+                        (Math.random() - 0.5) * 1.2,
+                        1.8 + Math.random() * 1.6, -0.22,
+                        6 + Math.random() * 5,
+                        0.05, 0.05, 0.05, 0.6, true
                     );
                 }
                 // Claim a wreck slot: the hull stays, sunk to its skids.

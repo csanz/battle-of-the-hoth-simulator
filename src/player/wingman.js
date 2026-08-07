@@ -349,19 +349,15 @@ class SimPilot {
             // The heading barely moves — it is rolling, not turning.
             this.facing = wrapAngle(this.facing + dir * 0.12 * dt);
             this.steerRate = 0;
-            // Momentum bends toward the crash point — not steering, just the
-            // arc the machine was always going to describe.
-            const tx = this._crashX ?? this.position.x + Math.sin(this.facing) * 120;
-            const tz = this._crashZ ?? this.position.z + Math.cos(this.facing) * 120;
-            const dTx = tx - this.position.x;
-            const dTz = tz - this.position.z;
-            const dT = Math.hypot(dTx, dTz) || 1;
-            const sp = Math.max(16, Math.hypot(this.velocity.x, this.velocity.z));
-            const k = Math.min(1, dt * 1.1);
-            this.velocity.x += (dTx / dT * sp - this.velocity.x) * k;
-            this.velocity.z += (dTz / dT * sp - this.velocity.z) * k;
+            // No steering, no target, no correction of any kind: the machine
+            // keeps exactly the trajectory it had when the hit landed, speed
+            // bleeding gently to drag, and rides that line into the ground.
+            const drag = Math.max(0, 1 - dt * 0.06);
+            this.velocity.x *= drag;
+            this.velocity.z *= drag;
             this.position.x += this.velocity.x * dt;
             this.position.z += this.velocity.z * dt;
+            const sp = Math.hypot(this.velocity.x, this.velocity.z);
             this.speed01 = Math.min(1, sp / 19.5);
             this.speedRaw = sp / 19.5;
             this.driveHeld = false;
@@ -371,10 +367,8 @@ class SimPilot {
                 ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
             this.pathY = this.groundY;
             this.lift01 = 0;
-            // Far from the mark it holds a shallow burning descent; inside it
-            // the nose lets go and the spiral tightens into the ground.
-            const sink = dT < 60 ? -4 : 2.2;
-            this.climb = expDamp(this.climb, sink, dT < 60 ? 1.0 : 0.5, dt);
+            // A steady dying descent — no floor, the deck simply arrives.
+            this.climb = expDamp(this.climb, -4, 0.55, dt);
             this.position.y = Math.max(
                 this.groundY + 2.6 + this.climb, this.groundY + 0.3
             );
@@ -654,17 +648,9 @@ export class Wingman {
             P._downT = 0;
             P._rollRate = 0.6;
             P._spinDir = Math.random() < 0.5 ? -1 : 1;
-            // Where it goes in: near the walker line but *clear of it* — the
-            // site picker (main's, which sees both herds) guarantees open
-            // snow, never a machine's legs.
-            const site = this.effects?.crashSite?.(P.position.x, P.position.z);
-            if (site) {
-                P._crashX = site.x;
-                P._crashZ = site.z;
-            } else {
-                P._crashX = P.position.x + Math.sin(P.facing) * 130;
-                P._crashZ = P.position.z + Math.cos(P.facing) * 130;
-            }
+            // The killing hit bursts on the airframe itself — the explosion
+            // the craft then flies out of, rolling, on its unchanged line.
+            fx.onKillHit?.(P.position.x, P.position.y, P.position.z);
         }
     }
 

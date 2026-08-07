@@ -150,7 +150,9 @@ export class SmokeTrails {
             this._pos[i * 3] += this._vel[i * 3] * dt;
             this._pos[i * 3 + 1] += this._vel[i * 3 + 1] * dt;
             this._pos[i * 3 + 2] += this._vel[i * 3 + 2] * dt;
-            this._size[i] += this._grow[i] * dt;
+            // Growth may be negative — a smoke ball that shrinks as it lets
+            // go — but a puff never inverts through zero.
+            this._size[i] = Math.max(0.02, this._size[i] + this._grow[i] * dt);
 
             const a = i * 4;
             d[a] = this._pos[i * 3];
