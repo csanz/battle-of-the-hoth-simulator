@@ -67,6 +67,12 @@ const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
  */
 const CRASH_AUDIBLE = 900;
 
+/** Radians a second the camera walks around a crashed craft. Slow — a little
+ *  under a quarter turn per second, so the seven seconds of the crash and the
+ *  wait carry the shot most of the way round the wreck without ever reading
+ *  as a spin. */
+const DEATH_CAM_RATE = 0.34;
+
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
 // so there is nothing to allowlist; in dev it runs in debug mode and sends
@@ -567,6 +573,53 @@ async function boot() {
     }
     let wreckNext = 0;
 
+    /**
+     * Leave a hull in the snow, and its pilot beside it.
+     *
+     * The graveyard's one door. An escort's fall comes through here, and so
+     * does the player's own crash — the same wreck, the same body thrown
+     * clear, because a snowspeeder that went in looks like a snowspeeder that
+     * went in whoever was flying it. For the player it is also what makes the
+     * restart mean something: they fly back out to the line past the ship
+     * they lost.
+     *
+     * @param {number} x @param {number} z where it came to rest
+     * @param {number} facing the yaw it was carrying
+     */
+    const leaveWreck = (x, z, facing) => {
+        const wk = wrecks[wreckNext];
+        if (!wk) return;
+        wreckNext = (wreckNext + 1) % wrecks.length;
+        wk.active = true;
+        wk.burnT = 32;
+        wk.age = 0;
+        wk.smokeT = 0;
+        wk.ctl.position.set(x, 0, z);
+        wk.ctl.facing = facing;
+        wk.ctl.lean = (Math.random() < 0.5 ? -1 : 1)
+            * (0.25 + Math.random() * 0.15);
+        wk.ctl.groundY = terrain.heightAt(x, z);
+        wk.ctl.pathY = wk.ctl.groundY;
+        wk.hull.snowOverride = 0;
+        wk.hull.setVisible(true);
+        // The pilot, thrown clear — a little away from the ship, off to the
+        // side of the skid line.
+        const side = facing + (Math.random() < 0.5 ? 1 : -1)
+            * (0.9 + Math.random() * 0.7);
+        const throwOut = 4 + Math.random() * 1.5;
+        wk.pilotX = x + Math.sin(side) * throwOut;
+        wk.pilotZ = z + Math.cos(side) * throwOut;
+        const slot = wrecks.indexOf(wk);
+        pilots.setCount(wrecks.reduce((n2, q) => n2 + (q.active ? 1 : 0), 0));
+        const body = pilots.walkers[slot];
+        if (body) {
+            pilots.place(body, character.position);
+            body.yaw = Math.random() * Math.PI * 2;
+            body.oneshot = null;
+            body.react("Death From Back Headshot", { hold: true, linger: 1e9 });
+        }
+    };
+
     const enemyFire = [walkers.bolts, walkers2.bolts, atsts.bolts, troopers.bolts];
     // The shared fate token: one ship wounded and falling at a time, ever.
     const raid = { turn: 0, size: Math.max(1, wingmen.length) };
@@ -748,38 +801,7 @@ async function boot() {
                         0.05, 0.05, 0.05, 0.6, true
                     );
                 }
-                // Claim a wreck slot: the hull stays, sunk to its skids.
-                const wk = wrecks[wreckNext];
-                if (!wk) return;
-                wreckNext = (wreckNext + 1) % wrecks.length;
-                wk.active = true;
-                wk.burnT = 32;
-                wk.age = 0;
-                wk.smokeT = 0;
-                wk.ctl.position.set(x, 0, z);
-                wk.ctl.facing = facing;
-                wk.ctl.lean = (Math.random() < 0.5 ? -1 : 1)
-                    * (0.25 + Math.random() * 0.15);
-                wk.ctl.groundY = terrain.heightAt(x, z);
-                wk.ctl.pathY = wk.ctl.groundY;
-                wk.hull.snowOverride = 0;
-                wk.hull.setVisible(true);
-                // The pilot, thrown clear — a little away from the ship, off
-                // to the side of the skid line.
-                const side = facing + (Math.random() < 0.5 ? 1 : -1)
-                    * (0.9 + Math.random() * 0.7);
-                const throwOut = 4 + Math.random() * 1.5;
-                wk.pilotX = x + Math.sin(side) * throwOut;
-                wk.pilotZ = z + Math.cos(side) * throwOut;
-                const slot = wrecks.indexOf(wk);
-                pilots.setCount(wrecks.reduce((n2, q) => n2 + (q.active ? 1 : 0), 0));
-                const body = pilots.walkers[slot];
-                if (body) {
-                    pilots.place(body, character.position);
-                    body.yaw = Math.random() * Math.PI * 2;
-                    body.oneshot = null;
-                    body.react("Death From Back Headshot", { hold: true, linger: 1e9 });
-                }
+                leaveWreck(x, z, facing);
             },
         };
         // The pilot's own back-channel to the same handlers. SimPilot is a
@@ -835,6 +857,9 @@ async function boot() {
         ],
         wrecks, terrain, explosions, spray, smoke, rig, audio, troopers,
         squadImpact: (x, z) => squadImpact(x, 0, z),
+        // Where the player's own crash ends up, and what happens after it.
+        onWreck: leaveWreck,
+        onRestart: () => startFlyover(),
     });
 
     // The escorts are told what is solid. Their constructor only ever saw the
@@ -1207,6 +1232,9 @@ async function boot() {
     let time = 0;
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
+    /** Seconds into the player's crash, driving the camera's slow circle of
+     *  the wreck. Zero whenever the craft is flying. */
+    let deathCamT = 0;
     /**
      * The cockpit's line to the pilot. Silent unless the player pushes the
      * stick during the opening hold — then "stand by" says the lock is
@@ -1540,11 +1568,27 @@ async function boot() {
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
+        // The death cam. While the craft is going in and lying there, the
+        // frame stops being a cockpit view and becomes a shot *of* the crash:
+        // the heading handed to the rig walks steadily round, and because the
+        // rig chases whatever heading it is given, the camera circles the
+        // wreck. The craft's own facing is untouched, so the hull lies still
+        // while the world turns around it — turning the wreck instead would
+        // spin it like a bottle. The bank is zeroed too: the roll belongs to
+        // the falling craft, not to the camera watching it.
+        let camFacing = speeder ? character.facing : null;
+        let camLean = character.lean;
+        if (character.crashing) {
+            deathCamT += dt;
+            camFacing = character.facing + deathCamT * DEATH_CAM_RATE;
+            camLean = 0;
+        } else {
+            deathCamT = 0;
+        }
         // Flying, the rig is handed the craft's heading and chases it itself —
         // see CameraRig.update — rather than the controller stepping rig.yaw.
         rig.update(
-            dt, character.position, _vel, character.lean, character.speed01,
-            speeder ? character.facing : null
+            dt, character.position, _vel, camLean, character.speed01, camFacing
         );
 
         // Jitters the projection and republishes everything the screen-space

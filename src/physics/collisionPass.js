@@ -58,10 +58,15 @@ const TRAUMA = { scrape: 0.12, hit: 0.35, crash: 0.9 };
 const PLAYER_BURN = 20;
 /** Grace after a ladder step — same idea as the wingmen's `_hitGrace`. */
 const PLAYER_GRACE = 4;
-/** Seconds face-down in the snow before the craft is flying again. Long
- *  enough that the crash lands as an event, short enough that it never
- *  becomes a loading screen. */
-const RECOVER = 2.2;
+/**
+ * Seconds lying in the snow before the run starts again.
+ *
+ * Long, on purpose. The camera spends them circling the wreck, and there is
+ * something to look at: the hull sunk to its skids and burning, the pilot
+ * thrown clear of the skid line, the crater. A crash the player is hurried
+ * away from may as well not have happened.
+ */
+const RECOVER = 5.4;
 /** Seconds between a craft's scrape effects — see `_contactFx`. */
 const SCRAPE_GAP = 0.22;
 /** Trooper squash: how close, how low, and how often per craft. */
@@ -110,6 +115,8 @@ export class CollisionPass {
      *   audio?: import("../audio/engine.js").AudioEngine|any|null,
      *   troopers?: import("../walkers/walker.js").WalkerHerd|null,
      *   squadImpact?: ((x:number, z:number) => void)|null,
+     *   onWreck?: ((x:number, z:number, facing:number) => void)|null,
+     *   onRestart?: (() => void)|null,
      * }} ctx everything the pass reacts through; all optional.
      */
     constructor(ctx) {
@@ -126,6 +133,10 @@ export class CollisionPass {
         this.audio = ctx.audio ?? null;
         this.troopers = ctx.troopers ?? null;
         this.squadImpact = ctx.squadImpact ?? null;
+        /** Leave a hull and its pilot where the player went in. */
+        this.onWreck = ctx.onWreck ?? null;
+        /** Start the run again from the top. */
+        this.onRestart = ctx.onRestart ?? null;
 
         // ------------------------------------------------------ the capsule pool
         // Sized for the worst the sliders can ask for: six capsules per AT-AT
@@ -787,6 +798,12 @@ export class CollisionPass {
             this.explosions?.impact(x, y, z, true, true);
             this._bang(x, z, 1.0, 0.95);
             this.rig?.addTrauma(1);
+            // The hull stays where it died, and the pilot beside it — the
+            // same graveyard an escort goes to, because a snowspeeder that
+            // went in looks the same whoever was flying it. The player's own
+            // craft is about to be re-staged miles away, so what is left
+            // here reads as the ship they just lost.
+            this.onWreck?.(x, z, facing);
 
             // The scar: the hole it made and the furrow behind it.
             this.terrain?.deform?.brush?.(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
@@ -825,17 +842,17 @@ export class CollisionPass {
         if (this._pRecover > 0) {
             this._pRecover = Math.max(0, this._pRecover - h);
             if (this._pRecover === 0) {
-                // Back in the air, on the line it was flying, with way on —
-                // handed a craft that is already moving rather than one
-                // hanging still over a battlefield.
-                const f = c.facing;
+                // And then it starts again, properly — not a craft popped
+                // back into the air over its own wreck, but the run from the
+                // top: staged out on the approach, escorts overhead, flying
+                // back in to a battle that never stopped without them.
                 c.endCrash?.();
-                c.velocity.set(Math.sin(f) * 18, 0, Math.cos(f) * 18);
-                input.riseLevel = 2;
+                c.velocity.set(0, 0, 0);
+                input.riseLevel = 3;
                 this._pDamage = 0;
                 this._pBurnT = 0;
                 this._pGrace = PLAYER_GRACE;
-                this.rig?.addTrauma(0.2);
+                this.onRestart?.();
             }
         }
     }

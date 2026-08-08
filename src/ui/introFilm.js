@@ -52,6 +52,7 @@ const TUNE = 1.2;
  *   preload(): Promise<boolean>,
  *   play(onVoiceLost?: () => void): void,
  *   playing: boolean,
+ *   spent: boolean,
  *   ok: boolean,
  *   duration: number|null,
  *   leadIn: number,
@@ -72,6 +73,8 @@ export function createIntroFilm(url, opts) {
         duration: null,
         /** True from `play()` until the square has removed itself. */
         playing: false,
+        /** Latched forever the first time `play()` is honoured. */
+        spent: false,
         /** Seconds from `play()` to the voice actually starting. */
         leadIn: hold + tune,
 
@@ -116,7 +119,15 @@ export function createIntroFilm(url, opts) {
          *   muted — the caller's chance to play the audio-only line instead.
          */
         play(onVoiceLost) {
-            if (!film.ok || !video || film.playing) return;
+            // Three locks, and they are not redundant. `spent` is the real
+            // one: a transmission is a one-shot for the life of the page, so
+            // however many ways a caller finds to ask again — a re-entrant
+            // trigger, a hot reload that boots a second copy of the world, a
+            // proximity test that re-arms — the clip cannot speak twice.
+            // `playing` stops a second square opening over the first, and
+            // `video` is gone once dismissed.
+            if (!film.ok || !video || film.playing || film.spent) return;
+            film.spent = true;
             film.playing = true;
 
             /** @type {number[]} */
