@@ -1276,8 +1276,17 @@ export class Wingman {
             this._puffT -= dt;
             if (this._puffT <= 0) {
                 this._puffT = 0.05;
+                // Off the DRAWN hull, exactly as the player's own burn is —
+                // never the pilot. `craft` is a full Speeder presentation, so
+                // its position is the controller's plus hover, plus the speed
+                // lift, plus the climb, all eased a beat behind; the pilot's
+                // own position is a flight-model number that the eye never
+                // sees. Trailing fire off the latter hangs it visibly off the
+                // machine it is supposed to be burning.
+                const hull = this.craft ? this.craft.position : P.position;
+                const yaw = this.craft ? this.craft.yaw : P.facing;
                 emitBurnTrail(
-                    fx.smoke, P.position, P.facing, P.velocity, this.damage >= 2
+                    fx.smoke, hull, yaw, P.velocity, this.damage >= 2
                 );
             }
         }
