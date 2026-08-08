@@ -861,6 +861,52 @@ async function boot() {
             });
         }
     };
+
+    /**
+     * The walker flyby: the shadow of the thing passing over you.
+     *
+     * Close enough to an AT-AT and the machine announces itself once — the
+     * hull noise you only ever hear from underneath it. Strictly ONE per
+     * approach: the trigger latches on the way in and does not re-arm until
+     * the craft has left by a comfortable margin, so a pass fires it a single
+     * time and hovering next to a leg fires it a single time, rather than
+     * stuttering the sample every frame the distance function wobbles across
+     * the line. Latched per machine, so threading the length of the line is a
+     * report per walker, which is what it should be.
+     *
+     * Distance-aware like everything else, but on a short leash — this is a
+     * proximity cue, so it is loud when it is earned and gone by 200 m.
+     */
+    const FLYBY_IN = 46;      // metres: close enough to be under it
+    const FLYBY_OUT = 78;     // and this far back out before it can fire again
+    const flybyArmed = new WeakMap();
+    const walkerFlyby = () => {
+        if (!speeder || S.speeder !== true || !audio) return;
+        for (const herd of [walkers, walkers2]) {
+            if (!herd || !herd.walkers) continue;
+            const n = Math.min(herd.count, herd.walkers.length);
+            const scale = herd.tune?.scale ? herd.tune.scale() : 1;
+            for (let i = 0; i < n; i++) {
+                const w = herd.walkers[i];
+                if (!w || w.oneshot) continue;
+                const d = Math.hypot(
+                    w.position.x - character.position.x,
+                    w.position.z - character.position.z
+                );
+                const fired = flybyArmed.get(w) === true;
+                if (!fired && d < FLYBY_IN * scale) {
+                    flybyArmed.set(w, true);
+                    const near = Math.max(0, 1 - d / 200);
+                    audio.play("walkerFlyby", {
+                        gain: 0.9 * near * near,
+                        rate: 0.96 + Math.random() * 0.08,
+                    });
+                } else if (fired && d > FLYBY_OUT * scale) {
+                    flybyArmed.set(w, false);
+                }
+            }
+        }
+    };
     speeder?.setVisible(true);
     showFigure();
 
@@ -1281,6 +1327,7 @@ async function boot() {
             wk.hull.update(dt);
         }
         buzzTroopers();
+        walkerFlyby();
         // ---- formation discipline ------------------------------------------
         // The herd machinery aims a machine once and never corrects — right
         // for a walker crossing a field, wrong for an escort that belongs to

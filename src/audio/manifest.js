@@ -270,6 +270,20 @@ export const AUDIO_MANIFEST = {
         needs: "speeder",
     },
 
+    // Passing under an AT-AT: the hull noise you only hear from beneath one.
+    // The trigger latches per machine (see `walkerFlyby`) so it cannot stutter
+    // while the craft sits alongside one — and this floor is the other half of
+    // "once": a run down the line crosses two or three machines inside a couple
+    // of seconds, and each of them arming separately would stack the same
+    // 1.7 s sample over itself. One report per sweep, not one per leg.
+    walkerFlyby: {
+        url: "audio/walker-flyby.mp3",
+        bus: "sfx",
+        gain: 0.8,
+        minGap: 3.0,
+        needs: "speeder",
+    },
+
     // The repulsorlift. One loop, held for as long as the craft exists, with its
     // rate and its level ridden by speed — idling low and slow, opening up under
     // power. Natively looped rather than overlapped for exactly the reason the
