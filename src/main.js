@@ -1331,6 +1331,11 @@ async function boot() {
                         Math.sin(f) * 16, 0, Math.cos(f) * 16
                     );
                 }
+                // The escorts go at the same moment the player does. They
+                // have been holding station either side of the cockpit for
+                // the length of the transmission; the beat is all three
+                // opening up together and running for the line.
+                for (const w of wingmen) w.releaseFormation();
             }
             // The player's entrance: velocity fed straight into the
             // controller, which integrates, terrain-snaps and banks exactly

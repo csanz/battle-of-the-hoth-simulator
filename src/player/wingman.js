@@ -98,6 +98,11 @@ const TROOPER_PASS_CHANCE = 0.65;
  *  that the smoothed path never has the hull kissing a dune crest. */
 const TROOPER_RUN_ALT = 3.5;
 
+/** Metres of climb per seat for the opening formation — high, level, low, so
+ *  the flight has depth from the cockpit. The player opens at the E ladder's
+ *  top rung (18 m), so seat 0 rides above them and seat 2 below. */
+const FLYOVER_CLIMB = [25, 17, 9];
+
 /* ------------------------------------------------------------------ avoidance
  * Nothing ever told SimPilot that the machines are solid, so it flew straight
  * through the volume they occupy — at the attack altitude (9*walkerScale, so
@@ -339,6 +344,12 @@ class SimPilot {
         this._avoidAuth = 0;
         this._avoidClimb = 0;
         this._avoidClimbHold = 0;
+        /** True while the opening formation is holding station beside the
+         *  player, and the offset it holds at. Cleared by
+         *  `releaseFormation`. See `flyover`. */
+        this._formationHold = false;
+        this._holdDX = 0;
+        this._holdDZ = 0;
 
         /** Going in: the floor stops holding and the craft settles into the
          *  snow. Set by the damage ladder's third hit through `goDown`.
@@ -371,6 +382,9 @@ class SimPilot {
         this.downed = false;
         this.crashed = false;
         this.bounced = false;
+        // A ship coming back from the graveyard is not part of an opening
+        // formation, whatever it was doing when it died.
+        this._formationHold = false;
         this._downStage = 0;
         this._downT = 0;
         this._impactSpin = 0;
@@ -505,9 +519,29 @@ class SimPilot {
         );
         this.facing = Math.atan2(dx, dz);
         this.velocity.set(nx * SPEED_REPO, 0, nz * SPEED_REPO);
-        this.climb = 13;
-        this._climbWant = 12;
+        // Stacked as well as spread. One ship rides high, one level, one low,
+        // so the flight has depth from the cockpit instead of being three
+        // shapes pasted at one altitude — and whichever way the player is
+        // looking, somebody crosses it.
+        this.climb = FLYOVER_CLIMB[this._seat] ?? 13;
+        this._climbWant = this.climb;
         this._lift = 1;
+        // Held on the player until the opening beat lets them go — see
+        // `releaseFormation`. The offset is remembered rather than the
+        // position: the player is flying IN during the transmission, so a
+        // flight frozen in world space would simply be left behind. Keeping
+        // station is what makes it a formation the player is *in* rather
+        // than three craft receding.
+        this._formationHold = true;
+        // Measured against the ANCHOR — the player themselves — not against
+        // the point the echelon was stacked from. Those are not the same
+        // place (the caller stacks from up the approach so the flight lands
+        // spread around the cockpit rather than behind it), and holding to
+        // the wrong one puts the whole formation a hundred metres off the
+        // tail of a camera that only looks forward.
+        const a = this.anchor ?? player;
+        this._holdDX = this.position.x - a.x;
+        this._holdDZ = this.position.z - a.z;
         this.groundY = this.terrain && this.terrain.heightAt
             ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
         this._cruiseGround = this.groundY;
@@ -758,10 +792,54 @@ class SimPilot {
         this._climbWant += this._avoidClimb;
     }
 
+    /**
+     * Let the opening formation go.
+     *
+     * Until this is called the flight sits where `flyover` staged it, holding
+     * station beside the player through the transmission. Releasing it hands
+     * the craft back to the ordinary phase machine, which is already pointed
+     * at the battle — so what the player sees is a formation that was holding
+     * with them, then opens the throttles and goes.
+     */
+    releaseFormation() {
+        if (!this._formationHold) return;
+        this._formationHold = false;
+        const f = this.facing;
+        this.velocity.set(Math.sin(f) * SPEED_REPO, 0, Math.cos(f) * SPEED_REPO);
+        this._climbWant = this.climb;
+    }
+
     /** @param {number} rawDt */
     update(rawDt) {
         const dt = Math.min(rawDt || 0, 1 / 30);
         if (dt <= 0) return;
+
+        // Holding formation for the opening: attitude, altitude and the hover
+        // all live, so the craft reads as a flying machine station-keeping
+        // rather than a prop — it simply covers no ground.
+        if (this._formationHold) {
+            // Station-keeping: carried along on the player's own way in, at
+            // the offset the staging gave this seat.
+            const a = this.anchor;
+            if (a) {
+                this.position.x = a.x + this._holdDX;
+                this.position.z = a.z + this._holdDZ;
+            }
+            this.velocity.set(0, 0, 0);
+            this.speed01 = 0;
+            this.speedRaw = 0;
+            this.steerRate = 0;
+            this.lean = expDamp(this.lean, 0, 3, dt);
+            this.driveHeld = false;
+            this.boostHeld = false;
+            this.fireHeld = false;
+            this.groundY = this.terrain && this.terrain.heightAt
+                ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
+            this.pathY = this.groundY;
+            this.lift01 = 1;
+            this.position.y = this.groundY + 2.6 + this.climb;
+            return;
+        }
 
         // Going down: the machine *rolls* — continuously, around its own long
         // axis, the way a crippled aircraft rolls over and over on the way
@@ -1317,6 +1395,9 @@ export class Wingman {
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */
+    /** Let the opening formation go — see `SimPilot.releaseFormation`. */
+    releaseFormation() { this.pilot.releaseFormation(); }
+
     flyover(player, bx, bz) {
         this.pilot.flyover(player, bx, bz);
     }

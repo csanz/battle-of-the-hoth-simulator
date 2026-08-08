@@ -563,7 +563,10 @@ export class Speeder {
         // flew every craft nose-UP nine degrees at speed, and since the guns
         // fire along the hull axis, sprayed the cannon fire over everything's
         // head. Positive under power, as the header always claimed.
-        const vr = S.flightThrottle === true
+        // A crash publishes the fall's real descent rate through the same
+        // channel, so the nose drops with it regardless of control scheme —
+        // the one rotation the fall was missing.
+        const vr = (S.flightThrottle === true || c.crashing)
             ? Math.max(-1, Math.min(1, (c.climbRate ?? 0) / 7)) : 0;
         const wantPitch =
             Math.min(1, Math.abs(along) / 19) * PITCH * Math.sign(along || 1)

@@ -42,9 +42,12 @@ const SURF_MAX = 19.5;
  * second they cannot fly.
  */
 const CRASH_FALL_T = 2.1;
-/** The climb the descent profile aims at — under the deck, so the last frame
- *  of the fall is genuinely in the snow rather than hovering a metre over it. */
-const CRASH_CONTACT = -3.2;
+/** The climb the descent profile aims at. Set exactly at the contact test's
+ *  own threshold (`2.6 + climb < 1.2`, i.e. climb < -1.4, with a hair past it
+ *  so the strict `<` actually fires) — the escorts' `DOWN_CONTACT` trick — so
+ *  the landing arrives ON the 2.1 s clock from any starting height instead of
+ *  0.1-0.6 s early depending on where the hit caught the craft. */
+const CRASH_CONTACT = -1.5;
 /** The hover height the drawn hull rides at (`HOVER` in speeder.js). The
  *  crash places the craft itself rather than leaving it to the hover solver,
  *  so it needs the same reference the presentation uses. */
@@ -276,6 +279,7 @@ export class CharacterController {
         if (this.crashing) return;
         this.crashing = true;
         this.crashLanded = false;
+        this.crashDown = false;
         this._crashT = 0;
         this._crashSpin = spinDir || (Math.random() < 0.5 ? -1 : 1);
         this._crashRoll = 0.7;
@@ -290,7 +294,14 @@ export class CharacterController {
     endCrash() {
         this.crashing = false;
         this.crashLanded = false;
+        this.crashDown = false;
         this._crashT = 0;
+        // The crash pinned these to `false`, and `false ?? input.fire` is
+        // `false` — the fallback only fires on undefined. Left as they were,
+        // the guns never worked again after the first crash.
+        this.fireHeld = undefined;
+        this.driveHeld = undefined;
+        this.boostHeld = undefined;
         this.lean = 0;
         this.carve = 0;
         this.impactSpin = 0;
@@ -326,11 +337,11 @@ export class CharacterController {
         // snow has it, the wreck lies there — it does not keep spinning like
         // a coin, which is what a roll that never stopped would look like.
         //
-        // The clock decides, not `crashLanded`: that latch is consumed by
-        // whoever is watching for the landing, so reading it here would see
-        // the craft touch down and then, one frame later, believe it was
-        // airborne again.
-        const flying = this._crashT < CRASH_FALL_T;
+        // `crashDown` decides, not the one-frame `crashLanded` latch: that
+        // latch is consumed by whoever is watching for the landing, so
+        // reading it here would see the craft touch down and then, one frame
+        // later, believe it was airborne again. The clock stays as a backstop.
+        const flying = this._crashT < CRASH_FALL_T && !this.crashDown;
 
         // Momentum, bleeding — hard once it is ploughing snow rather than air.
         const drag = Math.max(0, 1 - h * (flying ? 0.35 : 3.2));
@@ -347,11 +358,11 @@ export class CharacterController {
             this.lean += this._crashSpin * (this._crashRoll / 0.62) * h;
             // A slow drift of the nose — it is rolling, not turning.
             this.facing += this._crashSpin * 0.25 * h;
-        } else {
-            // Settled: whatever attitude it came to rest at, eased flat as
-            // the hull beds into the snow.
-            this.lean = expDamp(this.lean, 0, 1.6, h);
         }
+        // Settled: the wreck keeps whatever attitude it came to rest at —
+        // the escorts' graveyard hulls hold a fixed cant, and a wreck that
+        // rolls itself level while lying in the snow gives the whole fall
+        // away as animation.
         this.carve = 0;
 
         this.groundY = this.terrain.heightAt(this.position.x, this.position.z);
@@ -365,10 +376,16 @@ export class CharacterController {
         // holds the craft up for the first beat and then drops the nose.
         const u = Math.min(1, this._crashT / CRASH_FALL_T);
         const s = u * u * (0.6 + 0.4 * u);
+        const prevClimb = this._climb;
         this._climb = this._crashClimb0 + (CRASH_CONTACT - this._crashClimb0) * s;
         this.climb = this._climb;
         this._climbWant = this._climb;
-        this.climbRate = 0;
+        // The honest derivative of the profile, not a zero: this is what the
+        // hull's vertical-pitch term reads, and it is the difference between
+        // a craft that dives into the snow and one that descends flat like a
+        // lift. Peaks around 15-20 m/s from altitude — the pitch consumer
+        // saturates its own clamp, so the nose drops to full deflection.
+        this.climbRate = h > 1e-6 ? (this._climb - prevClimb) / h : 0;
         this.position.y = Math.max(
             this.groundY + HOVER_REF + this._climb, this.groundY + 0.3
         );
@@ -381,8 +398,9 @@ export class CharacterController {
 
         // Contact. A one-frame latch, exactly like the escorts' — whoever is
         // watching for it owns the fireball, the crater and what happens next.
-        if (!this.crashLanded && this.position.y - this.groundY < 1.2) {
+        if (!this.crashDown && this.position.y - this.groundY < 1.2) {
             this.crashLanded = true;
+            this.crashDown = true;
         }
     }
 

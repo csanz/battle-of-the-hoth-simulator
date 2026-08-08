@@ -197,6 +197,13 @@ export class CollisionPass {
 
     /** @param {number} dt seconds; clamped to 1/30 like the craft integrators. */
     update(dt) {
+        // The player's own crash runs on its own clock, above BOTH guards —
+        // the freeze-time short-circuit and the collisions toggle. It is the
+        // only path back to `endCrash`, so a crash interrupted by flipping
+        // the overlay's collisions switch must still reach the ground and
+        // hand the craft back, or the player is locked out of their own
+        // craft forever.
+        this._playerCrash(Math.min(dt, 1 / 30));
         if (S.collisions === false) {
             // Off is off: forget the prev positions so re-enabling does not
             // sweep a teleport's worth of motion through the field.
@@ -205,11 +212,6 @@ export class CollisionPass {
         }
         const h = Math.min(dt, 1 / 30);
         this._ladderUpkeep(h);
-        // The player's own crash runs on its own clock, above the sweeps and
-        // outside the freeze-time guard's short-circuit — the fall has to
-        // reach the ground and hand the craft back even on a frame where
-        // nothing else has moved far enough to touch anything.
-        this._playerCrash(h);
         if (h <= 1e-6) return; // freeze-time: nothing moved, nothing can hit
 
         this._rebuildPool();
@@ -626,9 +628,15 @@ export class CollisionPass {
                 }
             }
         } else if (sev === "crash") {
-            this.explosions?.impact(px, py - 2.4, pz, true, true);
+            // A crash that is about to trip the player's ladder hands its
+            // burst to `_trip` — otherwise one contact detonates two
+            // fireballs from a three-slot pool and starts the same 6.4 s
+            // recording twice in one frame. The metal strike stays: armour
+            // rings first, then the fuel goes.
+            const trips = isPlayer && this._pBurnT <= 0;
+            if (!trips) this.explosions?.impact(px, py - 2.4, pz, true, true);
             if (hull) this._bang(px, pz, HULL_SFX_GAIN.crash, 1.0, "speederHitWalker");
-            else this._bang(px, pz, 1.0, 1.0);
+            else if (!trips) this._bang(px, pz, 1.0, 1.0);
         }
     }
 

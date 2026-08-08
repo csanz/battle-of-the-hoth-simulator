@@ -324,7 +324,10 @@ export class SurfWake {
         // either — the craft has left the snow, so the trench goes with the
         // downwash (`lift01` is the same signal snowContact fades on).
         const air = 1 - Math.min(1, Math.max(0, ch.lift01 || 0));
-        const active = ch.surf > 0.06 && ch.speed > 1.6 && air > 0.02;
+        // A crashing craft pins `surf` open to hold the hull's flying pose,
+        // but it is falling, not displacing snow — no trench, no rooster tail.
+        const active = ch.surf > 0.06 && ch.speed > 1.6 && air > 0.02
+            && !ch.crashing;
 
         if (active) {
             if (!this._active) this._maybeRestart();
@@ -496,7 +499,7 @@ export class SurfWake {
         const ch = this.controller;
         const sp = this.spray;
         const n = this._count;
-        if (n < 3 || ch.surf < 0.15 || ch.speed < 3.0) {
+        if (n < 3 || ch.surf < 0.15 || ch.speed < 3.0 || ch.crashing) {
             this._plumeOwed = 0;
             return;
         }
