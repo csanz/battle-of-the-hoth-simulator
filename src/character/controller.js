@@ -184,6 +184,61 @@ export class CharacterController {
         this.steer = 0;
         /** d(steer)/dt of the slewed steer, for the bank lead. */
         this.steerRate = 0;
+
+        // ------------------------------------------------------------ impacts
+        /**
+         * Yaw-rate kick from a collision, rad/s. Added to `facing` every surf
+         * frame and exp-decayed toward zero — the craft is knocked round, then
+         * recovers. Written by `applyImpact`, capped at ±3.5.
+         */
+        this.impactSpin = 0;
+        /**
+         * Seconds of degraded control after a hit. While > 0 the steer
+         * authority drops, a fading wobble rides the stick and the thrust is
+         * halved — the pilot fighting the craft back, not a lockout.
+         */
+        this.controlScramble = 0;
+        /** Where the scramble timer started, for the wobble's fade fraction. */
+        this._scrambleMax = 0;
+        /**
+         * Internal clock for the scramble wobble. Its own accumulator rather
+         * than wall time, so a paused frame doesn't jump the wobble phase and
+         * the whole thing replays deterministically.
+         */
+        this._scrambleT = 0;
+        /**
+         * Published once per frame for the collision pass: null, or
+         * {closing, nx, nz} on the frame the hover floor absorbed a hard
+         * vertical closure (flying into a rising face). One reused object —
+         * consumers must read it before the next update.
+         */
+        this.terrainSlam = null;
+        this._slam = { closing: 0, nx: 0, nz: 0 };
+        /** Last frame's hover target height, for the slam closure rate. */
+        this._prevTargetY = NaN;
+    }
+
+    /**
+     * Collision response entry point (called by the collision pass).
+     *
+     * Sets the planar velocity outright — the impact math upstream already
+     * decided what survives the hit — adds a yaw-rate kick that `_surfStep`
+     * bleeds into the facing, and starts (or extends, never shortens) the
+     * control scramble.
+     *
+     * @param {number} vx  new world velocity x, m/s
+     * @param {number} vz  new world velocity z, m/s
+     * @param {number} spin  signed yaw-rate kick, rad/s
+     * @param {number} scrambleSec  seconds of degraded control
+     */
+    applyImpact(vx, vz, spin, scrambleSec) {
+        this.velocity.x = vx;
+        this.velocity.z = vz;
+        this.impactSpin = clamp(this.impactSpin + spin, -3.5, 3.5);
+        if (scrambleSec > this.controlScramble) {
+            this.controlScramble = scrambleSec;
+            this._scrambleMax = Math.max(this._scrambleMax, scrambleSec);
+        }
     }
 
     /**
@@ -204,6 +259,13 @@ export class CharacterController {
 
         if (this.surf > 0.5) this._surfStep(h, rig);
         else this._walkStep(h);
+
+        // Scramble countdown — after the step, so the frame a hit lands still
+        // steers with the full scramble it was just given.
+        if (this.controlScramble > 0) {
+            this.controlScramble = Math.max(0, this.controlScramble - h);
+            if (this.controlScramble === 0) this._scrambleMax = 0;
+        }
 
         // ---------------------------------------------------- integrate + snap
         this.position.x += this.velocity.x * h;
@@ -287,6 +349,35 @@ export class CharacterController {
         );
         // Snap with a little softness so micro-ripples don't jitter the rig.
         this.position.y = expDamp(this.position.y, targetY, 26, h);
+
+        // ---- terrain slam ---------------------------------------------------
+        // The hover snap absorbs vertical closures silently: fly fast into a
+        // rising face and targetY leaps while the eased snap trails behind, so
+        // the craft never "hits" anything. When that closure is fast, the slope
+        // actually opposes the motion and the craft is quick, that *is* a hit —
+        // published for one frame for the collision pass to consume. Climb-key
+        // rises (the E ladder, the intro fly-in seeding `_climb`) move targetY
+        // too, but those are self-inflicted: `climbRate` is subtracted from the
+        // closure before thresholding so only the terrain's share counts.
+        this.terrainSlam = null;
+        if (flyingNow && h > 1e-6 && Number.isFinite(this._prevTargetY)) {
+            const nx = this.groundNormal.x;
+            const ny = this.groundNormal.y;
+            const nz = this.groundNormal.z;
+            const vn = this.velocity.x * nx + this.velocity.z * nz;
+            const hSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+            if (hSpeed > 12 && ny < 0.86 && vn < 0) {
+                const closure =
+                    (targetY - this._prevTargetY) / h - this.climbRate;
+                if (closure > 7 && targetY - this.position.y > 0.9) {
+                    this._slam.closing = closure - vn; // vn < 0: adds -(v·n)
+                    this._slam.nx = nx;
+                    this._slam.nz = nz;
+                    this.terrainSlam = this._slam;
+                }
+            }
+        }
+        this._prevTargetY = targetY;
 
         // --------------------------------------------------------- bookkeeping
         this.speed = Math.hypot(this.velocity.x, this.velocity.z);
@@ -379,9 +470,33 @@ export class CharacterController {
         const prevSteer = this.steer;
         this.steer = expDamp(this.steer, steerRaw, 12, h);
         this.steerRate = h > 1e-6 ? (this.steer - prevSteer) / h : 0;
-        const steer = this.steer;
+        let steer = this.steer;
+
+        // Control scramble: after a hit the stick answers at a third of its
+        // authority with a ~7 Hz wobble riding it, fading as the timer runs
+        // out. The wobble runs on its own accumulator (not wall time) so it is
+        // deterministic and freeze-time doesn't jump its phase. Zero cost —
+        // and exactly zero change — when the timer is idle.
+        if (this.controlScramble > 0) {
+            this._scrambleT += h;
+            const frac = this._scrambleMax > 1e-6
+                ? this.controlScramble / this._scrambleMax : 0;
+            steer = clamp(
+                steer * 0.35
+                    + Math.sin(this._scrambleT * 7 * Math.PI * 2) * 0.55 * frac,
+                -1, 1
+            );
+        }
         const turn = steer * SURF_TURN * h;
         this.facing += turn;
+
+        // A collision's yaw kick rides the facing directly and bleeds off —
+        // the craft is knocked round, then straightens itself out.
+        if (this.impactSpin !== 0) {
+            this.facing += this.impactSpin * h;
+            this.impactSpin = expDamp(this.impactSpin, 0, 1.4, h);
+            if (Math.abs(this.impactSpin) < 1e-4) this.impactSpin = 0;
+        }
         // The chase camera still follows the craft round — but the rig now
         // chases `facing` itself through a damped follow (see CameraRig.update)
         // instead of having `turn` added straight into `rig.yaw` here, so the
@@ -449,6 +564,10 @@ export class CharacterController {
             // Board only.
             thrust -= 14; // pull back to scrub speed
         }
+
+        // Scrambled controls also cost thrust: half power while the pilot is
+        // wrestling the craft straight.
+        if (this.controlScramble > 0) thrust *= 0.5;
 
         this.velocity.x += fx * thrust * h;
         this.velocity.z += fz * thrust * h;

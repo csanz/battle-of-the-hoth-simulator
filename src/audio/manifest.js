@@ -199,14 +199,16 @@ export const AUDIO_MANIFEST = {
     // power. Natively looped rather than overlapped for exactly the reason the
     // board is: an overlap schedule is laid out in real seconds and cannot follow
     // a playback rate that changes every frame.
-    // A wingman going in. Fired from main's crash handler at the level and
-    // delay its distance earns, same physics as the cannon.
+    // A craft hitting something — a wingman going in, or the collision
+    // pass's own hits and crashes, player included. Fired at the level and
+    // delay its distance earns, same physics as the cannon. Gated on the
+    // speeder rather than the wingmen now that the player's craft can crash.
     speederCrash: {
         url: "audio/speeder-explosion.mp3",
         bus: "sfx",
         gain: 0.9,
         minGap: 0.5,
-        needs: "showWingman",
+        needs: "speeder",
     },
 
     speederJet: {

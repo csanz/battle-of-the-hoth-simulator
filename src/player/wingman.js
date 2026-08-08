@@ -218,6 +218,12 @@ class SimPilot {
         this.downed = false;
         this.crashed = false;
 
+        /** Collision aftermath: a yaw kick ringing down into the heading,
+         *  and a beat of blunted steering while the pilot recovers the line.
+         *  Fed by `applyImpact`; the downed ballistic ignores both. */
+        this._impactSpin = 0;
+        this._scramble = 0;
+
         this._pickRunPoint();
     }
 
@@ -225,6 +231,8 @@ class SimPilot {
     respawn() {
         this.downed = false;
         this.crashed = false;
+        this._impactSpin = 0;
+        this._scramble = 0;
         this._hitTroopers = Math.random() < this._trooperChance;
         this._lock = this._pickTarget();
         const cx = this._lock ? this._lock.position.x : this.anchor.x;
@@ -369,6 +377,27 @@ class SimPilot {
         this._blendT = 0;
     }
 
+    /**
+     * A collision's verdict, applied by the physics pass: the deflected
+     * velocity replaces the pilot's, a signed yaw kick rings down into the
+     * heading over the next second or so, and a scramble timer blunts the
+     * steering while the pilot fights the craft back onto its line. The
+     * downed ballistic ignores all of it — once the craft is going in,
+     * momentum owns the trajectory, not the pass.
+     * @param {number} vx new world velocity x, m/s
+     * @param {number} vz new world velocity z, m/s
+     * @param {number} spin signed yaw-rate kick, rad/s
+     * @param {number} scrambleSec seconds of degraded steering authority
+     */
+    applyImpact(vx, vz, spin, scrambleSec) {
+        this.velocity.x = vx;
+        this.velocity.z = vz;
+        this._impactSpin = Math.max(-3.5, Math.min(3.5,
+            (this._impactSpin || 0) + spin
+        ));
+        this._scramble = Math.max(this._scramble || 0, scrambleSec || 0);
+    }
+
     /** @param {number} rawDt */
     update(rawDt) {
         const dt = Math.min(rawDt || 0, 1 / 30);
@@ -380,6 +409,12 @@ class SimPilot {
         // die (a clear spot near the walker line, chosen at the killing hit).
         // Owns the whole update.
         if (this.downed) {
+            // Collision residue has no business here: whatever spin or
+            // scramble the impact left behind, the ballistic keeps its own
+            // slow roll and its own line, and the ground-contact check
+            // below stays honest — a spun-up craft still lands on time.
+            this._impactSpin = 0;
+            this._scramble = 0;
             this._downT = (this._downT ?? 0) + dt;
             const dir = this._spinDir || 1;
             // The roll accelerates as control bleeds away: a slow wing-over
@@ -562,6 +597,20 @@ class SimPilot {
         this._wantX = wantX;
         this._wantZ = wantZ;
 
+        // ---- collision aftermath -------------------------------------------
+        // The impact's yaw kick rings down into the heading, and while the
+        // scramble runs the pilot's corrections are blunt — the craft
+        // staggers visibly off the hit before the line comes back.
+        if (this._scramble > 0) {
+            this._scramble = Math.max(0, this._scramble - dt);
+            gain *= 0.4;
+        }
+        if (this._impactSpin) {
+            this.facing = wrapAngle(this.facing + this._impactSpin * dt);
+            this._impactSpin = expDamp(this._impactSpin, 0, 1.4, dt);
+            if (Math.abs(this._impactSpin) < 1e-3) this._impactSpin = 0;
+        }
+
         // ---- steering: turn-rate limited, slewed like the player's stick ---
         const wantHeading = Math.atan2(wantX - this.position.x, wantZ - this.position.z);
         const err = wrapAngle(wantHeading - this.facing);
@@ -611,7 +660,15 @@ class SimPilot {
         const ax = (this.velocity.x - prevVx) / dt;
         const az = (this.velocity.z - prevVz) / dt;
         const latAcc = ax * Math.cos(this.facing) - az * Math.sin(this.facing);
-        this.lean = expDamp(this.lean, Math.max(-1, Math.min(1, latAcc / 26)), 6.5, dt);
+        // While the scramble runs, the residual impact spin leaks into the
+        // bank target — the hull rocks off the hit, fading as control comes
+        // back, instead of holding a serene coordinated turn through it.
+        const rock = this._scramble > 0
+            ? this._impactSpin * 0.45 * Math.min(1, this._scramble)
+            : 0;
+        this.lean = expDamp(
+            this.lean, Math.max(-1, Math.min(1, latAcc / 26)) + rock, 6.5, dt
+        );
 
         // ---- altitude ------------------------------------------------------
         // The player's cruise flattening, given to the pilot (R1): a ~2 s
@@ -690,10 +747,60 @@ export class Wingman {
             P._downT = 0;
             P._rollRate = 0.6;
             P._spinDir = Math.random() < 0.5 ? -1 : 1;
+            P._impactSpin = 0;
+            P._scramble = 0;
             // The killing hit bursts on the airframe itself — the explosion
             // the craft then flies out of, rolling, on its unchanged line.
             fx.onKillHit?.(P.position.x, P.position.y, P.position.z);
         }
+    }
+
+    /**
+     * The collision pass's verdict lands here, after the deflection has
+     * already gone through `applyImpact`. A 'crash' is a kill only when
+     * this seat holds the raid's fate token — one ship at a time, always.
+     * Without the token (or for a plain 'hit') it is one ladder step,
+     * respecting the same grace a bolt would, and the ladder is never
+     * allowed to reach three this way: it clamps at burning instead, so
+     * the token stays the only door into the downed pipeline. 'scrape'
+     * is paint — the bounce was the whole event.
+     * @param {'scrape'|'hit'|'crash'} severity
+     * @param {number} x contact x
+     * @param {number} y contact y
+     * @param {number} z contact z
+     */
+    collisionHit(severity, x, y, z) {
+        if (severity === "scrape") return;
+        const P = this.pilot;
+        if (P.downed) return;
+        const myTurn = this.effects?.raid
+            ? this.effects.raid.turn === (P._seat ?? 0)
+            : true;
+        if (severity === "crash" && myTurn && this.damage < 3) {
+            // The walker won. Same downed pipeline as the third bolt — the
+            // craft rolls out of the burst on its unchanged line, and the
+            // impact's own spin picks which way it rolls in.
+            this.damage = 3;
+            P.downed = true;
+            P._downT = 0;
+            P._rollRate = 0.6;
+            P._spinDir = P._impactSpin
+                ? Math.sign(P._impactSpin)
+                : (Math.random() < 0.5 ? -1 : 1);
+            P._impactSpin = 0;
+            P._scramble = 0;
+            this.effects?.onKillHit?.(x, y, z);
+            return;
+        }
+        if (this._hitGrace > 0) return;
+        if (!myTurn && this.damage >= 2) {
+            // The step that would put it in, without the token: hold the
+            // ladder at fire and just buy the grace — the deflection and
+            // the burning trail already tell the story.
+            this._hitGrace = 4.5 + Math.random() * 3;
+            return;
+        }
+        if (this.effects) this._takeHit();
     }
 
     /**

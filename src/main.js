@@ -31,6 +31,7 @@ import { WalkerHerd } from "./walkers/walker.js";
 import { loadWalkerAsset } from "./walkers/walkerAsset.js";
 import { Speeder } from "./player/speeder.js";
 import { Wingman, emitBurnTrail } from "./player/wingman.js";
+import { CollisionPass } from "./physics/collisionPass.js";
 import { Overlay } from "./ui/overlay.js";
 import { createFpsMeter } from "./ui/fpsMeter.js";
 import { Sky } from "./render/sky.js";
@@ -661,6 +662,24 @@ async function boot() {
         };
     }
 
+    // ------------------------------------------------------------ collisions
+    // The craft meet the machines: swept spheres against the walkers' capsule
+    // sets, the wrecks and each other, with the consequences routed to their
+    // owners — deflection and scramble to the craft, a stumble to the walker,
+    // snow, smoke, fire and the report to the field. Gated live by
+    // S.collisions; every collaborator is optional, so a boot without a
+    // speeder or without wingmen runs the parts it has.
+    const collision = new CollisionPass({
+        character, speeder, wingmen,
+        herds: [
+            { herd: walkers, kind: "atat" },
+            { herd: walkers2, kind: "atat" },
+            { herd: atsts, kind: "atst" },
+        ],
+        wrecks, terrain, explosions, spray, smoke, rig, audio, troopers,
+        squadImpact: (x, z) => squadImpact(x, 0, z),
+    });
+
     // A low pass is its own kind of near miss: the craft screaming over at
     // deck height sends the squad diving without a shot fired — same dives,
     // same get-up as the shellburst. Keyed off the hull's actual lift and
@@ -1275,6 +1294,9 @@ async function boot() {
             w.tick(dt);
             w.update(dt);
         }
+        // After every craft has moved, before the rig frames the result: the
+        // contacts this frame's motion earned, resolved and reacted to.
+        collision.update(dt);
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
@@ -1444,7 +1466,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, pilots, wrecks, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers, explosions,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, pilots, wrecks, speeder, wingman, wingmen, collision, contact, spray, wake, spells, destroyers, explosions,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,
