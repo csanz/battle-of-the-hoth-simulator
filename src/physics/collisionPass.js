@@ -32,6 +32,7 @@
  */
 
 import { S } from "../core/settings.js";
+import { input } from "../core/input.js";
 import { makeCapsulePool, sweptSphereVsCapsule, sweptSphereVsSphere } from "./colliders.js";
 import { speederImpactResponse } from "./impact.js";
 import { emitBurnTrail } from "../player/wingman.js";
@@ -57,6 +58,10 @@ const TRAUMA = { scrape: 0.12, hit: 0.35, crash: 0.9 };
 const PLAYER_BURN = 20;
 /** Grace after a ladder step — same idea as the wingmen's `_hitGrace`. */
 const PLAYER_GRACE = 4;
+/** Seconds face-down in the snow before the craft is flying again. Long
+ *  enough that the crash lands as an event, short enough that it never
+ *  becomes a loading screen. */
+const RECOVER = 2.2;
 /** Seconds between a craft's scrape effects — see `_contactFx`. */
 const SCRAPE_GAP = 0.22;
 /** Trooper squash: how close, how low, and how often per craft. */
@@ -174,6 +179,8 @@ export class CollisionPass {
         this._pGrace = 0;
         this._pBurnT = 0;
         this._pPuffT = 0;
+        /** Seconds left lying in the snow; 0 when not crashed. */
+        this._pRecover = 0;
     }
 
     /** @param {number} dt seconds; clamped to 1/30 like the craft integrators. */
@@ -186,6 +193,11 @@ export class CollisionPass {
         }
         const h = Math.min(dt, 1 / 30);
         this._ladderUpkeep(h);
+        // The player's own crash runs on its own clock, above the sweeps and
+        // outside the freeze-time guard's short-circuit — the fall has to
+        // reach the ground and hand the craft back even on a frame where
+        // nothing else has moved far enough to touch anything.
+        this._playerCrash(h);
         if (h <= 1e-6) return; // freeze-time: nothing moved, nothing can hit
 
         this._rebuildPool();
@@ -265,6 +277,18 @@ export class CollisionPass {
                 const c = this.character;
                 const on = !!c && !!this.speeder && S.speeder === true && c.surf > 0.5;
                 s.active = on;
+                // Mid-crash the craft is the fall's, exactly as a downed
+                // escort is its ballistic's: the roll into the snow is
+                // scripted, and bouncing it off the machine that just killed
+                // it would fight the very sequence that machine started.
+                if (on && c.crashing) {
+                    s.downed = true;
+                    s.cx = c.position.x;
+                    s.cy = c.position.y;
+                    s.cz = c.position.z;
+                    s.has = false;
+                    continue;
+                }
                 s.downed = false;
                 if (on) {
                     s.cx = c.position.x;
@@ -709,7 +733,16 @@ export class CollisionPass {
         if (this._pDamage >= 3) this._trip();
     }
 
-    /** The third rung: the burst on the hull, and the long burn home. */
+    /**
+     * The third rung — and for the player that is not a damage state, it is
+     * the crash.
+     *
+     * The escorts earned a whole choreography for going in and it would be a
+     * strange game that gave the person holding the controller less. So the
+     * burst goes off on the hull in the air, the stick is taken away, and the
+     * craft rolls down into the snow on its own clock; `_playerCrash` picks it
+     * up from the landing.
+     */
     _trip() {
         const c = this.character;
         this._pDamage = 3;
@@ -721,13 +754,89 @@ export class CollisionPass {
         if (hull) this.explosions?.impact(hull.x, hull.y - 2.4, hull.z, true, true);
         if (hull) this._bang(hull.x, hull.z, 1.0, 1.0);
         this.rig?.addTrauma(1);
-        if (c) {
-            c.applyImpact(
-                c.velocity.x * 0.3, c.velocity.z * 0.3,
-                (Math.random() < 0.5 ? -1 : 1) * 2.8
-                    * /** @type {number} */ (S.impactSpin),
-                2.5
+        // Which way it rolls in: keep whatever the impact was already turning
+        // the nose, so the tumble is a continuation of the hit and not a new
+        // idea the craft had.
+        if (c) c.beginCrash?.(Math.sign(c.impactSpin) || 0);
+    }
+
+    /**
+     * The player's crash, from the moment the snow arrives to the moment they
+     * have a craft again.
+     *
+     * The landing is the escorts' recipe at the player's own hull — fireball,
+     * crater, the trench it ploughed getting there, a wall of snow — and then
+     * a beat of lying in it, because a crash that hands control straight back
+     * is not a crash, it is a stumble. `RECOVER` later the craft is flying
+     * again from where it fell, nose along its old line, and the ladder is
+     * clear.
+     *
+     * @param {number} h clamped seconds
+     */
+    _playerCrash(h) {
+        const c = this.character;
+        if (!c) return;
+
+        if (c.crashLanded && this._pRecover <= 0) {
+            c.crashLanded = false;
+            this._pRecover = RECOVER;
+            const x = c.position.x, z = c.position.z;
+            const y = (this.terrain?.heightAt(x, z) ?? c.position.y);
+            const facing = c.facing;
+
+            this.explosions?.impact(x, y, z, true, true);
+            this._bang(x, z, 1.0, 0.95);
+            this.rig?.addTrauma(1);
+
+            // The scar: the hole it made and the furrow behind it.
+            this.terrain?.deform?.brush?.(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
+            this.terrain?.deform?.brush?.(
+                x - Math.sin(facing) * 4.5, z - Math.cos(facing) * 4.5,
+                2.4, 0.5, 0.55, 1.0, 0.3, facing, 3.0, 1.0
             );
+
+            // The splash: a hull's worth of snow thrown up and out.
+            if (this.spray) {
+                for (let i = 0; i < 60; i++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const out = 3 + Math.random() * 12;
+                    this.spray.emit(
+                        x + Math.cos(a) * 1.5, y + 0.5, z + Math.sin(a) * 1.5,
+                        Math.cos(a) * out, 5 + Math.random() * 11, Math.sin(a) * out,
+                        0.08 + Math.random() * 0.16, 0.8 + Math.random() * 0.9,
+                        Math.random() < 0.5 ? 1 : 0, 1.5
+                    );
+                }
+            }
+            if (this.smoke) {
+                for (let i = 0; i < 10; i++) {
+                    this.smoke.emit(
+                        x + (Math.random() - 0.5) * 3, y + 1 + Math.random() * 2,
+                        z + (Math.random() - 0.5) * 3,
+                        (Math.random() - 0.5) * 3, 1.5 + Math.random() * 2.5,
+                        (Math.random() - 0.5) * 3,
+                        2.2 + Math.random() * 1.6, -0.18, 5 + Math.random() * 3,
+                        0.07, 0.07, 0.07, 0.75, true
+                    );
+                }
+            }
+        }
+
+        if (this._pRecover > 0) {
+            this._pRecover = Math.max(0, this._pRecover - h);
+            if (this._pRecover === 0) {
+                // Back in the air, on the line it was flying, with way on —
+                // handed a craft that is already moving rather than one
+                // hanging still over a battlefield.
+                const f = c.facing;
+                c.endCrash?.();
+                c.velocity.set(Math.sin(f) * 18, 0, Math.cos(f) * 18);
+                input.riseLevel = 2;
+                this._pDamage = 0;
+                this._pBurnT = 0;
+                this._pGrace = PLAYER_GRACE;
+                this.rig?.addTrauma(0.2);
+            }
         }
     }
 

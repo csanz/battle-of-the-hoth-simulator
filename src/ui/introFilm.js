@@ -40,15 +40,27 @@ const TUNE = 1.2;
  *   does not ship the file falls through to the hosted blob. Public Vercel
  *   blobs answer with `access-control-allow-origin: *`, so the cross-origin
  *   fetch-to-blob works the same as the local one.
+ * @param {{hold?: number, tune?: number, label?: string}} [opts]
+ *   The staging, because not every transmission is an entrance. The opening
+ *   one can afford to take its time — the fly-in owns the frame and the
+ *   static is what *brings* the eye to the corner. A call that arrives
+ *   mid-battle cannot: the player is flying, and a two-and-a-half second
+ *   runway before anyone speaks is a runway spent looking at walkers. So the
+ *   hold and the tune-in are the caller's to shorten, and the label is theirs
+ *   to name.
  * @returns {{
  *   preload(): Promise<boolean>,
  *   play(onVoiceLost?: () => void): void,
+ *   playing: boolean,
  *   ok: boolean,
  *   duration: number|null,
  *   leadIn: number,
  * }}
  */
-export function createIntroFilm(url) {
+export function createIntroFilm(url, opts) {
+    const hold = opts?.hold ?? HOLD;
+    const tune = opts?.tune ?? TUNE;
+    const labelText = opts?.label ?? "▸ INCOMING TRANSMISSION";
     /** @type {HTMLVideoElement|null} */
     let video = null;
     /** @type {HTMLDivElement|null} */
@@ -58,8 +70,10 @@ export function createIntroFilm(url) {
     const film = {
         ok: false,
         duration: null,
+        /** True from `play()` until the square has removed itself. */
+        playing: false,
         /** Seconds from `play()` to the voice actually starting. */
-        leadIn: HOLD + TUNE,
+        leadIn: hold + tune,
 
         async preload() {
             try {
@@ -102,7 +116,8 @@ export function createIntroFilm(url) {
          *   muted — the caller's chance to play the audio-only line instead.
          */
         play(onVoiceLost) {
-            if (!film.ok || !video) return;
+            if (!film.ok || !video || film.playing) return;
+            film.playing = true;
 
             /** @type {number[]} */
             const timers = [];
@@ -126,6 +141,7 @@ export function createIntroFilm(url) {
                 for (const t of timers) clearTimeout(t);
                 if (rafId) cancelAnimationFrame(rafId);
                 video?.pause();
+                film.playing = false;
                 if (!frame) return;
                 const f = frame;
                 frame = null;
@@ -172,7 +188,7 @@ export function createIntroFilm(url) {
                     "transition:opacity 0.3s ease",
                 ].join(";");
                 const label = document.createElement("div");
-                label.textContent = "▸ INCOMING TRANSMISSION";
+                label.textContent = labelText;
                 label.style.cssText = [
                     "position:absolute", "left:0", "right:0", "bottom:7px",
                     "text-align:center",
@@ -239,8 +255,8 @@ export function createIntroFilm(url) {
                         video.play().catch(dismiss);
                         onVoiceLost?.();
                     });
-                }, TUNE * 1000));
-            }, HOLD * 1000));
+                }, tune * 1000));
+            }, hold * 1000));
         },
     };
 

@@ -96,11 +96,22 @@ async function boot() {
     // fetched to a blob underneath the GPU work, so the boot gate's click
     // plays local bytes instantly. Stub-tolerant — a miss costs the film,
     // not the boot, and the audio-only line takes over.
+    // The hosted cut is the ONE source, deliberately: a local copy in
+    // `public/video/` used to be tried first and win, which meant a freshly
+    // uploaded clip silently lost to a stale file nobody remembered shipping.
     const introFilm = createIntroFilm([
-        "video/luke-intro.mp4",
         "https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4",
     ]);
     const filmReady = introFilm.preload();
+    // The second transmission: Luke again, called in the first time the player
+    // closes on the walker line. Staged far tighter than the opening — the
+    // player is flying and under fire, so the square cuts in almost at once
+    // rather than taking the entrance's long runway.
+    const crossFilm = createIntroFilm(
+        ["https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-cross-fire.mp4"],
+        { hold: 0.15, tune: 0.5, label: "▸ INCOMING TRANSMISSION" }
+    );
+    const crossReady = crossFilm.preload();
     // Same reasoning for the walkers: 4.4 MB of geometry, three levels of detail
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
@@ -880,8 +891,17 @@ async function boot() {
     const FLYBY_IN = 46;      // metres: close enough to be under it
     const FLYBY_OUT = 78;     // and this far back out before it can fire again
     const flybyArmed = new WeakMap();
+    /**
+     * How near the line the player must get before Luke calls again, metres.
+     * Wider than the flyby ring on purpose: the transmission is about having
+     * *arrived at the battle*, not about passing under one machine, and the
+     * square wants to be up before the shooting starts rather than during it.
+     */
+    const CROSSFIRE_AT = 165;
+    let crossFired = false;
     const walkerFlyby = () => {
-        if (!speeder || S.speeder !== true || !audio) return;
+        if (!speeder || S.speeder !== true) return;
+        let nearest = Infinity;
         for (const herd of [walkers, walkers2]) {
             if (!herd || !herd.walkers) continue;
             const n = Math.min(herd.count, herd.walkers.length);
@@ -893,6 +913,8 @@ async function boot() {
                     w.position.x - character.position.x,
                     w.position.z - character.position.z
                 );
+                if (d < nearest) nearest = d;
+                if (!audio) continue;
                 const fired = flybyArmed.get(w) === true;
                 if (!fired && d < FLYBY_IN * scale) {
                     flybyArmed.set(w, true);
@@ -905,6 +927,18 @@ async function boot() {
                     flybyArmed.set(w, false);
                 }
             }
+        }
+
+        // Luke's second call, once a session: the player has closed on the
+        // line. Held off until the opening hold has fully released and the
+        // first transmission is off the screen, so the two can never share
+        // the corner or talk over each other.
+        if (
+            !crossFired && crossFilm.ok && nearest < CROSSFIRE_AT
+            && introHold <= 0 && !introFilm.playing
+        ) {
+            crossFired = true;
+            crossFilm.play();
         }
     };
     speeder?.setVisible(true);
@@ -1629,6 +1663,10 @@ async function boot() {
     await loading.phase("loading audio", 0.96);
     await audioReady;
     await filmReady;
+    // The second transmission is fetched behind the boot with everything else,
+    // so the moment it is called for it plays local bytes — a clip that
+    // buffered mid-battle would arrive after the moment that earned it.
+    await crossReady;
 
     // One click to enter, and that click is also the gesture that makes sound
     // legal. `unlock()` is issued from inside the handler — hence the callback —

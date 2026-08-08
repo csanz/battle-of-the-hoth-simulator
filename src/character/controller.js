@@ -34,6 +34,21 @@ const WALK_ACCEL = 26;
 const WALK_DECEL = 30;
 
 const SURF_MAX = 19.5;
+
+/* ------------------------------------------------------------------- crash
+ * Seconds from the killing contact to the snow. Half the escorts' 4.0, and
+ * for a reason: their fall is cinema watched from outside, this one is
+ * happening to the person holding the controller, and every second of it is a
+ * second they cannot fly.
+ */
+const CRASH_FALL_T = 2.1;
+/** The climb the descent profile aims at — under the deck, so the last frame
+ *  of the fall is genuinely in the snow rather than hovering a metre over it. */
+const CRASH_CONTACT = -3.2;
+/** The hover height the drawn hull rides at (`HOVER` in speeder.js). The
+ *  crash places the craft itself rather than leaving it to the hover solver,
+ *  so it needs the same reference the presentation uses. */
+const HOVER_REF = 2.6;
 /**
  * The E ladder's mid rung, as a fraction of `speederClimbMax` — rung 3 is the
  * full ceiling. Also where the lift saturates: at and above this height the
@@ -232,12 +247,142 @@ export class CharacterController {
      * @param {number} scrambleSec  seconds of degraded control
      */
     applyImpact(vx, vz, spin, scrambleSec) {
+        if (this.crashing) return;
         this.velocity.x = vx;
         this.velocity.z = vz;
         this.impactSpin = clamp(this.impactSpin + spin, -3.5, 3.5);
         if (scrambleSec > this.controlScramble) {
             this.controlScramble = scrambleSec;
             this._scrambleMax = Math.max(this._scrambleMax, scrambleSec);
+        }
+    }
+
+    /**
+     * Put the craft in. Called when a contact was hard enough that flying
+     * away from it would be a lie — the player has hit an AT-AT, or driven
+     * into a hillside at speed, and what follows is not a damage state but a
+     * crash.
+     *
+     * It deliberately reads like the wingmen's: the stick is gone, the
+     * momentum is what it was, and the craft rolls around its own long axis
+     * on the way down. The difference is the clock. An escort's death is
+     * cinema seen from outside and is allowed five and a half seconds; this
+     * one is happening to the person holding the controller, and every one of
+     * those seconds is a second they cannot fly, so it is roughly half that.
+     *
+     * @param {number} [spinDir] which way it rolls in, ±1; random if omitted
+     */
+    beginCrash(spinDir) {
+        if (this.crashing) return;
+        this.crashing = true;
+        this.crashLanded = false;
+        this._crashT = 0;
+        this._crashSpin = spinDir || (Math.random() < 0.5 ? -1 : 1);
+        this._crashRoll = 0.7;
+        this._crashClimb0 = this._climb;
+        this.impactSpin = 0;
+        this.controlScramble = 0;
+        this._scrambleMax = 0;
+        this.terrainSlam = null;
+    }
+
+    /** Hand the craft back, flying, wherever the caller has put it. */
+    endCrash() {
+        this.crashing = false;
+        this.crashLanded = false;
+        this._crashT = 0;
+        this.lean = 0;
+        this.carve = 0;
+        this.impactSpin = 0;
+        this.controlScramble = 0;
+        this._scrambleMax = 0;
+        this._prevTargetY = NaN;
+    }
+
+    /**
+     * One frame of going in: drag, a roll that keeps accelerating, and a
+     * descent that arrives at the snow on a fixed clock rather than whenever
+     * the terrain happens to come up.
+     *
+     * Publishes the same surface the presentation reads every other frame —
+     * a crash the hull could not draw would not be worth having.
+     *
+     * @param {number} h clamped seconds
+     */
+    _crashStep(h) {
+        this._crashT += h;
+
+        // No stick reaches this. The surf blend is pinned open so the hull
+        // stays in its flying pose rather than trying to stand up mid-fall.
+        this.surfActive = false;
+        this.surf = 1;
+        this.driveHeld = false;
+        this.boostHeld = false;
+        this.fireHeld = false;
+        this.steer = 0;
+        this.steerRate = 0;
+
+        // Down is down. Everything below this line is the *fall*; once the
+        // snow has it, the wreck lies there — it does not keep spinning like
+        // a coin, which is what a roll that never stopped would look like.
+        //
+        // The clock decides, not `crashLanded`: that latch is consumed by
+        // whoever is watching for the landing, so reading it here would see
+        // the craft touch down and then, one frame later, believe it was
+        // airborne again.
+        const flying = this._crashT < CRASH_FALL_T;
+
+        // Momentum, bleeding — hard once it is ploughing snow rather than air.
+        const drag = Math.max(0, 1 - h * (flying ? 0.35 : 3.2));
+        this.velocity.x *= drag;
+        this.velocity.z *= drag;
+        this.position.x += this.velocity.x * h;
+        this.position.z += this.velocity.z * h;
+
+        if (flying) {
+            // The roll: it winds up, so the craft is turning over faster at
+            // the snow than it was at the top. `lean` is what the hull banks
+            // with, so a steadily growing lean IS a continuous roll.
+            this._crashRoll = Math.min(2.6, this._crashRoll + h * 0.9);
+            this.lean += this._crashSpin * (this._crashRoll / 0.62) * h;
+            // A slow drift of the nose — it is rolling, not turning.
+            this.facing += this._crashSpin * 0.25 * h;
+        } else {
+            // Settled: whatever attitude it came to rest at, eased flat as
+            // the hull beds into the snow.
+            this.lean = expDamp(this.lean, 0, 1.6, h);
+        }
+        this.carve = 0;
+
+        this.groundY = this.terrain.heightAt(this.position.x, this.position.z);
+        this.terrain.normalAt(this.position.x, this.position.z, this.groundNormal);
+        this.pathY = this.groundY;
+        this.lift01 = 0;
+
+        // The descent, on a normalised profile from whatever height the hit
+        // interrupted down to the deck at u = 1 — so it arrives on the clock
+        // from any altitude, the same trick the escorts' fall uses. The shape
+        // holds the craft up for the first beat and then drops the nose.
+        const u = Math.min(1, this._crashT / CRASH_FALL_T);
+        const s = u * u * (0.6 + 0.4 * u);
+        this._climb = this._crashClimb0 + (CRASH_CONTACT - this._crashClimb0) * s;
+        this.climb = this._climb;
+        this._climbWant = this._climb;
+        this.climbRate = 0;
+        this.position.y = Math.max(
+            this.groundY + HOVER_REF + this._climb, this.groundY + 0.3
+        );
+
+        const sp = Math.hypot(this.velocity.x, this.velocity.z);
+        this.speed = sp;
+        this.speed01 = clamp(sp / SURF_MAX, 0, 1);
+        this.speedRaw = sp / SURF_MAX;
+        this.acceleration.set(0, 0, 0);
+
+        // Contact. A one-frame latch, exactly like the escorts' — whoever is
+        // watching for it owns the fireball, the crater and what happens next.
+        if (!this.crashLanded && this.position.y - this.groundY < 1.2) {
+            this.crashLanded = true;
         }
     }
 
@@ -249,6 +394,14 @@ export class CharacterController {
         const h = Math.min(dt, 1 / 30);
 
         this.prevVelocity.copy(this.velocity);
+
+        // Going in. Owns the whole update — no stick, no thrust, no hover: the
+        // craft is falling and the only thing left is which way it rolls.
+        if (this.crashing) {
+            this._crashStep(h);
+            return;
+        }
+
         this.surfActive = input.surf;
 
         // Ease the surf blend — entering and exiting are transitions, not switches.
