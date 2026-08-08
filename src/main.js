@@ -1307,6 +1307,9 @@ async function boot() {
                         Math.sin(f) * 16, 0, Math.cos(f) * 16
                     );
                 }
+                // The escorts go when the player does — the opening's last
+                // beat, all four craft opening up together.
+                for (const w of wingmen) w.releaseFormation();
             }
             // The player's entrance: velocity fed straight into the
             // controller, which integrates, terrain-snaps and banks exactly
