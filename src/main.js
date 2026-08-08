@@ -89,10 +89,23 @@ const DEATH_CAM_PITCH = 0.42;
  *  after every crash. Far enough that flying back in is a journey with the
  *  battle growing in the windscreen, rather than a hop. */
 const RESTAGE_BACK = 340;
-/** Metres up the approach the escort echelon is measured from, so the flight
- *  lands just behind the player and comes over the top during the hold rather
- *  than out of sight behind it. See `startFlyover`. */
-const FLYOVER_LEAD = 70;
+/**
+ * Metres up the approach the escort echelon is measured from.
+ *
+ * `flyover` stacks the flight 90, 125 and 160 m behind the point it is given,
+ * so this number minus those is where the ships actually sit relative to the
+ * player: at 150 that is +60, +25 and −10 — two off the nose, one off the
+ * tail, the whole formation inside one glance and pulling away toward the
+ * battle together. That is the opening as it read before the restage was
+ * lengthened, and it is the arrangement to preserve; it happens to be the old
+ * restage distance because that is precisely what used to set it, back when
+ * the echelon was measured from the player's pre-restage position.
+ *
+ * Deliberately NOT tied to `RESTAGE_BACK` any more. That coupling was the
+ * whole bug: stretching the run-in to 340 m dragged the flight 340 m out with
+ * it, and three specks leaving on the horizon is not a flyover.
+ */
+const FLYOVER_LEAD = 150;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
