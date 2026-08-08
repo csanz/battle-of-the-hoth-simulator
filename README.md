@@ -10,8 +10,6 @@ skimming metres over procedural snow while AT-AT walkers advance across the
 field, Imperial Star Destroyers hang on station high overhead, and an AI
 wingman runs passes beside you.
 
-Source: <https://github.com/csanz/battle-of-the-hoth-simulator>
-
 ## The battle
 
 Hoth is the Empire's answer to the destruction of the Death Star: the Rebel
@@ -23,12 +21,59 @@ out. That is the scene this simulator lives in: the white field, the low sun,
 the walkers coming on regardless, and a speeder that is faster than
 everything and stronger than nothing.
 
-What's simulated: terrain-hugging repulsorlift flight (thrust, brake/reverse,
-boost, an E-latch cruise climb), cannons with tunable bolts that crater the
-snow, walkers that march, track, and shoot back, deformable snow that
-remembers every trench and impact, the fleet overhead, and a flight recorder
-so the wingman can replay your own flying. Everything is tunable live from
-the in-game overlay (backtick).
+## What you can do in it
+
+**Fly the T-47.** Repulsorlift flight that hugs the terrain — thrust,
+brake and reverse, a boost that opens the field of view and the wind with
+it, and a three-rung climb ladder from a deck ride that carves a trench in
+the snow up to a clean cruise above the fight. The craft carries momentum:
+it banks into its turns, drifts through hard ones, and the camera lags the
+way a chase plane would.
+
+**Shoot.** Twin cannons whose bolts are live-tunable — colour, width,
+length, speed, range, convergence — and which crater the snow wherever they
+land. Bolts that hit near the infantry send them diving; bolts that land on
+the armour blossom into raymarched fireballs.
+
+**Hit things, and be hit.** Every machine carries real collision capsules —
+four legs that stride with the drawn legs, a hull, a head — and the craft is
+swept against them, so nothing tunnels through anything at any speed. What
+happens on contact comes from relative velocity, mass, impact angle and
+where on the hull you struck it: a graze scrapes and throws snow, a solid
+hit deflects and spins you with the controls scrambled, and a hard one
+bursts on the airframe and starts a fire you fly home with. An AT-AT is
+immovable and answers with a stumble. You can still thread between its legs
+at speed — that shot is the whole point of a snowspeeder.
+
+**Fight alongside a flight of three.** AI wingmen fly a full strafing loop —
+swing wide, line up, hold the run with the guns open, then break hard past
+the legs — with lead pursuit, a lateral-acceleration turn budget, and enough
+sense to dodge the machines. One of them specialises in the infantry. They
+take damage in stages: smoke, then fire, then a five-and-a-half second death
+that is choreographed onto its own crash recording — down at four seconds, a
+skip off the snow, and the final impact at five and a half. The wreck stays
+where it fell, burning for half a minute and slowly frosting white, with the
+pilot's body thrown clear beside it. Only ever one at a time.
+
+**Watch a battle that runs itself.** AT-ATs march in formation on a latched
+bearing, never crossing each other and never turning to chase you. AT-STs
+keep their distance behind them, each with a squad of snowtroopers holding
+station at its heels — troopers who flinch, dive, and die when the fire gets
+close. Everything shoots back. Get close enough and the walkers' viewport
+slits glow red with crew silhouettes crossing the glass.
+
+**Leave a mark.** The snow is deformable and it remembers: every trench your
+deck ride cuts, every crater a bolt digs, every furrow a crashing ship
+ploughs. Above it all, Star Destroyers hang on station in the sky.
+
+**Tune all of it live.** The overlay (backtick) exposes several hundred
+settings — lighting, snow, the speeder's look and feel, jet plume placement
+with a debug view that paints its footprint, collision thresholds and
+bounce, walker count and scale, the fleet's station. F2 copies the current
+camera, player and herd placement as a pinnable opening shot.
+
+**On a phone, too.** Touch controls with a virtual stick, fire, and climb
+buttons, drag to look.
 
 ## Running it
 
@@ -38,7 +83,7 @@ npm run dev
 ```
 
 Controls: **W** thrust · **S** brake / reverse · **A/D** steer ·
-**Shift** boost · **E** climb / descend (latch) · **Space** fire ·
+**Shift** boost · **E** climb — three rungs, cycling · **Space** fire ·
 mouse look · wheel zoom · **`** overlay · **F2** copy the current
 camera/player/herd as a pinnable opening shot.
 
