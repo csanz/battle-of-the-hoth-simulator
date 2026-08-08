@@ -51,6 +51,8 @@ import { OPENING, applyOpening, installShotCapture } from "./core/openingShot.js
 
 // ------------------------------------------------------- module-scope scratch
 const _vel = new THREE.Vector3();
+/** Scratch for the escorts' staging point — see `startFlyover`. */
+const _stage = new THREE.Vector3();
 
 /** Beauty clear — linear (§2.6). */
 const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
@@ -87,6 +89,10 @@ const DEATH_CAM_PITCH = 0.42;
  *  after every crash. Far enough that flying back in is a journey with the
  *  battle growing in the windscreen, rather than a hop. */
 const RESTAGE_BACK = 340;
+/** Metres up the approach the escort echelon is measured from, so the flight
+ *  lands just behind the player and comes over the top during the hold rather
+ *  than out of sight behind it. See `startFlyover`. */
+const FLYOVER_LEAD = 70;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
@@ -1082,14 +1088,30 @@ async function boot() {
             character.position.z -= Math.cos(h) * RESTAGE_BACK;
             character.facing = h;
         }
-        // …and the escorts after it, because `flyover` stacks them in echelon
-        // a hundred-odd metres BEHIND whatever position it is handed. Staging
-        // them before the craft was moved left them measured from a spot the
-        // player was no longer at — the length of the restage ahead of them —
-        // so instead of thundering overhead they were already out in front,
-        // leaving on their own. They belong behind wherever the player
-        // actually starts, whatever that distance becomes.
-        for (const w of wingmen) w.flyover(character.position, bx, bz);
+        // …and the escorts after it, measured from a point a little way UP
+        // the player's own approach.
+        //
+        // Both halves of that matter. `flyover` stacks the flight in echelon
+        // ninety to a hundred and sixty metres behind whatever position it is
+        // handed, so handing it the player's start puts the whole flight off
+        // the back of a camera that only looks forward: they are not late,
+        // they are invisible, and the first the player sees of them is three
+        // specks already leaving at seven seconds. Handing it the player's
+        // *pre-restage* position — which is what happened before — puts them
+        // as far in front as the restage is long, which at 340 m is a flight
+        // that was never overhead at all.
+        //
+        // So: forward of the player by most of one echelon. The flight lands
+        // twenty to ninety metres back, and with roughly sixteen metres a
+        // second of closing speed it comes over the top across the whole
+        // opening hold, one ship at a time, which is the shot.
+        const eh = character.facing;
+        _stage.set(
+            character.position.x + Math.sin(eh) * FLYOVER_LEAD,
+            character.position.y,
+            character.position.z + Math.cos(eh) * FLYOVER_LEAD
+        );
+        for (const w of wingmen) w.flyover(_stage, bx, bz);
     };
 
     const post = new PostChain(gfx, rig, depthPass, sky);
