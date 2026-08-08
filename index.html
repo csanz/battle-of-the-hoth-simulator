@@ -3,25 +3,33 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>SNOWFLOW — Battle of Hoth</title>
+<title>Battle of Hoth Simulator — SNOWFLOW</title>
 <meta name="description" content="Fly a T-47 snowspeeder against the Imperial walker line — a real-time Battle of Hoth simulation, in your browser." />
+<link rel="canonical" href="https://www.battleofhoth.app/" />
 
-<!-- The share card: what a pasted link unfurls into. The image is a staged
-     in-game frame with the wordmark set over it, 1200x630, absolute URLs
-     because scrapers resolve nothing. -->
+<!-- The share card: what a pasted link unfurls into.
+     Every URL here is absolute and on THIS site's own domain, both because
+     scrapers resolve nothing relative and because they are stricter about the
+     image than about anything else — WhatsApp in particular will render the
+     title and the description and then quietly drop an og:image hosted
+     somewhere other than the page it came from. The deploy answers on
+     battleofhoth.app, so that is what these must say, not the origin the
+     project happens to build on. -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="SNOWFLOW" />
-<meta property="og:title" content="SNOWFLOW — Battle of Hoth" />
+<meta property="og:title" content="Battle of Hoth Simulator" />
 <meta property="og:description" content="Fly a T-47 snowspeeder against the Imperial walker line — a real-time Battle of Hoth simulation, in your browser." />
-<meta property="og:url" content="https://battle-of-the-hoth-simulator.vercel.app/" />
-<meta property="og:image" content="https://battle-of-the-hoth-simulator.vercel.app/og.jpg" />
+<meta property="og:url" content="https://www.battleofhoth.app/" />
+<meta property="og:image" content="https://www.battleofhoth.app/og.jpg" />
+<meta property="og:image:secure_url" content="https://www.battleofhoth.app/og.jpg" />
+<meta property="og:image:type" content="image/jpeg" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="A T-47 snowspeeder banking over the dunes toward a line of AT-AT walkers." />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="SNOWFLOW — Battle of Hoth" />
+<meta name="twitter:title" content="Battle of Hoth Simulator" />
 <meta name="twitter:description" content="Fly a T-47 snowspeeder against the Imperial walker line — a real-time Battle of Hoth simulation, in your browser." />
-<meta name="twitter:image" content="https://battle-of-the-hoth-simulator.vercel.app/og.jpg" />
+<meta name="twitter:image" content="https://www.battleofhoth.app/og.jpg" />
 <!-- The boot screen's backdrop, requested before the CSS asks for it, so the
      first paint is the battle rather than a gradient the photo pops in over. -->
 <link rel="preload" as="image" href="/boot-bg.jpg" />
@@ -402,7 +410,7 @@
         <div class="boot-inner">
             <div class="title">
                 <div class="wordmark">BATTLE OF HOTH</div>
-                <div class="tagline">a snowflow simulation</div>
+                <div class="tagline">a snowflow simulation &nbsp;·&nbsp; fly it yourself</div>
             </div>
             <div class="load">
                 <div class="bar"><div class="bar-fill" id="boot-bar"></div></div>

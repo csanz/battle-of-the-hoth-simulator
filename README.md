@@ -1,4 +1,4 @@
-**▶ Fly it now: [battle-of-the-hoth-simulator.vercel.app](https://battle-of-the-hoth-simulator.vercel.app/)**
+**▶ Fly it now: [battleofhoth.app](https://www.battleofhoth.app/)**
 
 ![A T-47 snowspeeder banking low over the dunes, two AT-ATs on the horizon](docs/header.png)
 
