@@ -361,6 +361,10 @@ function buildQuadMesh() {
     geometry.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geometry.setIndex(new THREE.BufferAttribute(idx, 1));
 
+// Placed entirely by the vertex shader, so the CPU-side bounds are a
+    // fiction — pin them rather than letting three derive nonsense (or a
+    // NaN radius) from the lattice indices.
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     const mesh = new THREE.Mesh(geometry);
     mesh.name = "spray";
     mesh.metadata = { triangles: CAPACITY * 2, vertices: CAPACITY * 4 };

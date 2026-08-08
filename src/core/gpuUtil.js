@@ -55,6 +55,12 @@ function triGeometry() {
             "position",
             new THREE.BufferAttribute(new Float32Array([-1, -1, 3, -1, -1, 3]), 2)
         );
+        // The position here is 2D on purpose — it is already clip space — but
+        // three's bounds pass reads a z off every vertex regardless, gets
+        // `undefined` from a two-component attribute, and warns about a NaN
+        // radius on every boot. The triangle covers the screen by definition
+        // and is never culled, so give it bounds that say so.
+        _triGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     }
     return _triGeometry;
 }
