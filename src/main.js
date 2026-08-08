@@ -1065,8 +1065,7 @@ async function boot() {
         }
         bx /= n;
         bz /= n;
-        for (const w of wingmen) w.flyover(character.position, bx, bz);
-        // The player's own entrance: their craft staged 150 m back along the
+        // The player's own entrance FIRST: their craft staged back along the
         // formation's bearing, making way toward the spot the boot pinned.
         // Flown by feeding the controller's velocity each frame (the intro
         // block in the run loop), so the presentation, the camera and the
@@ -1083,6 +1082,14 @@ async function boot() {
             character.position.z -= Math.cos(h) * RESTAGE_BACK;
             character.facing = h;
         }
+        // …and the escorts after it, because `flyover` stacks them in echelon
+        // a hundred-odd metres BEHIND whatever position it is handed. Staging
+        // them before the craft was moved left them measured from a spot the
+        // player was no longer at — the length of the restage ahead of them —
+        // so instead of thundering overhead they were already out in front,
+        // leaving on their own. They belong behind wherever the player
+        // actually starts, whatever that distance becomes.
+        for (const w of wingmen) w.flyover(character.position, bx, bz);
     };
 
     const post = new PostChain(gfx, rig, depthPass, sky);
