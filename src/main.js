@@ -120,9 +120,15 @@ async function boot() {
     // The hosted cut is the ONE source, deliberately: a local copy in
     // `public/video/` used to be tried first and win, which meant a freshly
     // uploaded clip silently lost to a stale file nobody remembered shipping.
-    const introFilm = createIntroFilm([
-        "https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4",
-    ]);
+    const introFilm = createIntroFilm(
+        ["https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4"],
+        // The hold is what keeps the two beats in order: the escorts own the
+        // frame while they come through, and only once they are past does the
+        // square open and hunt for signal. Cut to the pass — three ships
+        // clear the cockpit inside about two and a half seconds — with enough
+        // margin that a slow first frame cannot swap the order.
+        { hold: 3.0 }
+    );
     const filmReady = introFilm.preload();
     // Same reasoning for the walkers: 4.4 MB of geometry, three levels of detail
     // and one baked gait, none of which needs a device to arrive. It is awaited

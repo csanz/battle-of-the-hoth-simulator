@@ -108,12 +108,12 @@ const FLYOVER_CLIMB = [25, 17, 9];
  * Not the cruise. The escorts have to OVERTAKE a player who is flying their
  * own run-in at up to 34 m/s, and at the 32 m/s cruise the closing speed is
  * two — the flight would still be behind the cockpit when the hold ended.
- * At this it closes at thirty-odd and the three ships cross at roughly 2.5,
- * 3.5 and 4.4 seconds, which is the shape the opening had when the player
- * used to sit still for it. The phase machine sheds the excess in about a
+ * At this it closes at sixty-odd and the three ships are all through the
+ * cockpit inside a couple of seconds — before the transmission square opens,
+ * which is the order the opening is supposed to have. The phase machine sheds the excess in about a
  * second once the pass is over.
  */
-const FLYOVER_SPEED = 70;
+const FLYOVER_SPEED = 84;
 /** Seconds the pass keeps that speed before the phase machine takes the
  *  throttle back. Long enough for the last ship to clear the cockpit. */
 const FLYOVER_HOLD = 6;
