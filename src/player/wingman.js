@@ -101,33 +101,6 @@ const TROOPER_RUN_ALT = 3.5;
 /** Metres of climb per seat for the opening formation — high, level, low, so
  *  the flight has depth from the cockpit. The player opens at the E ladder's
  *  top rung (18 m), so seat 0 rides above them and seat 2 below. */
-const FLYOVER_CLIMB = [25, 17, 9];
-/**
- * Metres a second the opening pass is flown at.
- *
- * Not the cruise. The escorts have to OVERTAKE a player who is flying their
- * own run-in at up to 34 m/s, and at the 32 m/s cruise the closing speed is
- * two — the flight would still be behind the cockpit when the hold ended.
- * At this it closes at sixty-odd and the three ships are all through the
- * cockpit inside a couple of seconds — before the transmission square opens,
- * which is the order the opening is supposed to have. The phase machine sheds the excess in about a
- * second once the pass is over.
- */
-const FLYOVER_SPEED = 84;
-/** Seconds the pass keeps that speed before the phase machine takes the
- *  throttle back. Long enough for the last ship to clear the cockpit. */
-const FLYOVER_HOLD = 6;
-/**
- * Where each seat STOPS, in metres along the player's own heading.
- *
- * The opening is three beats, not one: the flight comes through fast, it
- * settles into formation either side of the cockpit and holds there for the
- * length of the transmission, and then it opens up and runs for the line.
- * These are the slots it holds in — one ahead, one close, one just off the
- * tail — and with the lane offsets and the height stack the flight reads as
- * a formation the player is inside rather than traffic going past.
- */
-const FLYOVER_STOP = [55, 20, -15];
 
 /* ------------------------------------------------------------------ avoidance
  * Nothing ever told SimPilot that the machines are solid, so it flew straight
@@ -370,13 +343,6 @@ class SimPilot {
         this._avoidAuth = 0;
         this._avoidClimb = 0;
         this._avoidClimbHold = 0;
-        /** Seconds of opening-pass throttle left. See `FLYOVER_SPEED`. */
-        this._flyoverT = 0;
-        /** True once the pass has reached its slot and is holding station on
-         *  the player, and the offset it holds at. See `FLYOVER_STOP`. */
-        this._formationHold = false;
-        this._holdDX = 0;
-        this._holdDZ = 0;
 
         /** Going in: the floor stops holding and the craft settles into the
          *  snow. Set by the damage ladder's third hit through `goDown`.
@@ -406,8 +372,6 @@ class SimPilot {
 
     /** A fresh airframe for this seat, brought in from deep on a new bearing. */
     respawn() {
-        this._flyoverT = 0;
-        this._formationHold = false;
         this.downed = false;
         this.crashed = false;
         this.bounced = false;
@@ -544,26 +508,9 @@ class SimPilot {
             player.z - nz * back + nx * lane
         );
         this.facing = Math.atan2(dx, dz);
-        // The pass is flown FAST — much faster than the escorts' cruise, and
-        // deliberately so. The opening used to work because the player sat
-        // still for it: three ships at 32 m/s crossed a stationary cockpit at
-        // 2.8, 3.9 and 5.0 s, and the hold was cut to fit. Then the player's
-        // own run-in arrived and carried them forward at up to 34 — within
-        // two metres a second of the escorts — and a formation that closes at
-        // walking pace never arrives at all. Closing speed is what makes a
-        // flyover a flyover, so this is set against the run-in rather than
-        // against the cruise, and the original timings come back out.
-        this.velocity.set(nx * FLYOVER_SPEED, 0, nz * FLYOVER_SPEED);
-        this._flyoverT = FLYOVER_HOLD;
-        // Not held yet — the flight has to arrive first. `update` catches it
-        // at the slot and stops it there.
-        this._formationHold = false;
-        // Stacked as well as spread. One ship rides high, one level, one low,
-        // so the flight has depth from the cockpit instead of being three
-        // shapes pasted at one altitude — and whichever way the player is
-        // looking, somebody crosses it.
-        this.climb = FLYOVER_CLIMB[this._seat] ?? 13;
-        this._climbWant = this.climb;
+        this.velocity.set(nx * SPEED_REPO, 0, nz * SPEED_REPO);
+        this.climb = 13;
+        this._climbWant = 12;
         this._lift = 1;
         this.groundY = this.terrain && this.terrain.heightAt
             ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
@@ -578,10 +525,6 @@ class SimPilot {
         this._wantX = bx;
         this._wantZ = bz;
         this._blendT = 0;
-        this._avoidCmd = 0;
-        this._avoidAuth = 0;
-        this._avoidClimb = 0;
-        this._avoidClimbHold = 0;
     }
 
     /**
@@ -815,22 +758,6 @@ class SimPilot {
         this._climbWant += this._avoidClimb;
     }
 
-    /**
-     * Let the formation go — the opening's last beat.
-     *
-     * Fired on the frame the player gets the stick back, so the flight opens
-     * up at the same moment they do. A no-op if the pass never got as far as
-     * parking, which keeps a short hold or a disabled film from stranding
-     * anybody.
-     */
-    releaseFormation() {
-        this._formationHold = false;
-        this._flyoverT = 0;
-        const f = this.facing;
-        this.velocity.set(Math.sin(f) * SPEED_BREAK, 0, Math.cos(f) * SPEED_BREAK);
-        this._climbWant = this.climb;
-    }
-
     /** @param {number} rawDt */
     update(rawDt) {
         const dt = Math.min(rawDt || 0, 1 / 30);
@@ -943,44 +870,6 @@ class SimPilot {
         }
 
         this._phaseT += dt;
-        if (this._flyoverT > 0) this._flyoverT = Math.max(0, this._flyoverT - dt);
-
-        // The opening's middle beat. Coming through on the pass, each ship
-        // watches for its own slot alongside the player and parks in it —
-        // and once parked it keeps station on them, because the player is
-        // still flying their run-in underneath all of this and a flight
-        // frozen in world space would simply be left behind.
-        if (this._formationHold) {
-            const a = this.anchor;
-            if (a) {
-                this.position.x = a.x + this._holdDX;
-                this.position.z = a.z + this._holdDZ;
-            }
-            this.velocity.set(0, 0, 0);
-            this.speed01 = 0;
-            this.speedRaw = 0;
-            this.steerRate = 0;
-            this.lean = expDamp(this.lean, 0, 3, dt);
-            this.driveHeld = false;
-            this.boostHeld = false;
-            this.fireHeld = false;
-            this.groundY = this.terrain && this.terrain.heightAt
-                ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
-            this.pathY = this.groundY;
-            this.lift01 = 1;
-            this.position.y = this.groundY + 2.6 + this.climb;
-            return;
-        }
-        if (this._flyoverT > 0 && this.anchor) {
-            const a = this.anchor;
-            const fx = Math.sin(this.facing), fz = Math.cos(this.facing);
-            const dxa = this.position.x - a.x, dza = this.position.z - a.z;
-            if (dxa * fx + dza * fz >= (FLYOVER_STOP[this._seat] ?? 20)) {
-                this._formationHold = true;
-                this._holdDX = dxa;
-                this._holdDZ = dza;
-            }
-        }
 
         const target = this._target();
         const tx = target ? target.position.x : this.anchor.x;
@@ -1170,13 +1059,7 @@ class SimPilot {
         this.facing = wrapAngle(this.facing + turn * dt);
 
         // ---- speed along the nose ------------------------------------------
-        // The opening pass overrides the phase's own target for as long as
-        // it lasts: the reposition phase wants the cruise, and letting it
-        // have its way the instant the flight is staged is exactly what
-        // stopped the escorts ever overtaking the player's run-in.
-        const want = this._flyoverT > 0
-            ? Math.max(this._speedTarget, FLYOVER_SPEED)
-            : this._speedTarget;
+        const want = this._speedTarget;
         const fx = Math.sin(this.facing), fz = Math.cos(this.facing);
         const prevVx = this.velocity.x, prevVz = this.velocity.z;
         // Mostly on rails with a touch of drift: velocity chases the nose fast
@@ -1438,9 +1321,6 @@ export class Wingman {
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */
-    /** Let the opening formation go — see `SimPilot.releaseFormation`. */
-    releaseFormation() { this.pilot.releaseFormation(); }
-
     flyover(player, bx, bz) {
         this.pilot.flyover(player, bx, bz);
     }

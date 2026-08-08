@@ -83,10 +83,6 @@ const DEATH_CAM_RATE = 0.72;
 const DEATH_CAM_DIST = 26;
 const DEATH_CAM_PITCH = 0.42;
 
-/** Metres back along the approach the craft is staged, at the opening and
- *  after every crash. Far enough that flying back in is a journey with the
- *  battle growing in the windscreen, rather than a hop. */
-const RESTAGE_BACK = 340;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
@@ -120,16 +116,15 @@ async function boot() {
     // The hosted cut is the ONE source, deliberately: a local copy in
     // `public/video/` used to be tried first and win, which meant a freshly
     // uploaded clip silently lost to a stale file nobody remembered shipping.
-    const introFilm = createIntroFilm(
-        ["https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4"],
-        // The hold is what keeps the two beats in order: the escorts own the
-        // frame while they come through, and only once they are past does the
-        // square open and hunt for signal. Cut to the pass — three ships
-        // clear the cockpit inside about two and a half seconds — with enough
-        // margin that a slow first frame cannot swap the order.
-        { hold: 3.0 }
-    );
+    const introFilm = createIntroFilm([
+        "https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4",
+    ]);
     const filmReady = introFilm.preload();
+    const crossFilm = createIntroFilm(
+        ["https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-cross-fire.mp4"],
+        { hold: 0.15, tune: 0.5, label: "▸ INCOMING TRANSMISSION" }
+    );
+    const crossReady = crossFilm.preload();
     // Same reasoning for the walkers: 4.4 MB of geometry, three levels of detail
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
@@ -928,8 +923,17 @@ async function boot() {
     const FLYBY_IN = 46;      // metres: close enough to be under it
     const FLYBY_OUT = 78;     // and this far back out before it can fire again
     const flybyArmed = new WeakMap();
+    /**
+     * How near the line the player must get before Luke calls again, metres.
+     * Wider than the flyby ring on purpose: the transmission is about having
+     * *arrived at the battle*, not about passing under one machine, and the
+     * square wants to be up before the shooting starts rather than during it.
+     */
+    const CROSSFIRE_AT = 165;
+    let crossFired = false;
     const walkerFlyby = () => {
-        if (!speeder || S.speeder !== true || !audio) return;
+        if (!speeder || S.speeder !== true) return;
+        let nearest = Infinity;
         for (const herd of [walkers, walkers2]) {
             if (!herd || !herd.walkers) continue;
             const n = Math.min(herd.count, herd.walkers.length);
@@ -941,6 +945,8 @@ async function boot() {
                     w.position.x - character.position.x,
                     w.position.z - character.position.z
                 );
+                if (d < nearest) nearest = d;
+                if (!audio) continue;
                 const fired = flybyArmed.get(w) === true;
                 if (!fired && d < FLYBY_IN * scale) {
                     flybyArmed.set(w, true);
@@ -953,6 +959,20 @@ async function boot() {
                     flybyArmed.set(w, false);
                 }
             }
+        }
+
+        // Luke's second call, once a session: the player has closed on the
+        // line. Held off until the opening hold has fully released and the
+        // first transmission is off the screen, so the two can never share
+        // the corner or talk over each other. The film itself latches
+        // `spent` the first time it is honoured, so this cannot double up
+        // however many ways the trigger is reached.
+        if (
+            !crossFired && crossFilm.ok && nearest < CROSSFIRE_AT
+            && introHold <= 0 && !introFilm.playing
+        ) {
+            crossFired = true;
+            crossFilm.play();
         }
     };
     speeder?.setVisible(true);
@@ -1071,7 +1091,8 @@ async function boot() {
         }
         bx /= n;
         bz /= n;
-        // The player's own entrance FIRST: their craft staged back along the
+        for (const w of wingmen) w.flyover(character.position, bx, bz);
+        // The player's own entrance: their craft staged 150 m back along the
         // formation's bearing, making way toward the spot the boot pinned.
         // Flown by feeding the controller's velocity each frame (the intro
         // block in the run loop), so the presentation, the camera and the
@@ -1084,23 +1105,10 @@ async function boot() {
                 toX: character.position.x, toZ: character.position.z,
                 heading: h,
             };
-            character.position.x -= Math.sin(h) * RESTAGE_BACK;
-            character.position.z -= Math.cos(h) * RESTAGE_BACK;
+            character.position.x -= Math.sin(h) * 150;
+            character.position.z -= Math.cos(h) * 150;
             character.facing = h;
         }
-        // …and the escorts after it, stacked behind wherever that put them —
-        // ninety, a hundred and twenty-five and a hundred and sixty metres
-        // back, which is what `flyover` does with the point it is handed.
-        //
-        // This is the original arrangement, and the hold below is cut to fit
-        // it. What broke it was never the staging: it was the player's own
-        // run-in. The opening worked when the player sat still for it and the
-        // flight crossed a stationary cockpit; once the craft was given way of
-        // its own, the escorts were closing at two metres a second and never
-        // arrived. `FLYOVER_SPEED` is the fix, over in the pilot — the pass is
-        // flown fast enough to overtake a moving player, which is what makes a
-        // flyover a flyover.
-        for (const w of wingmen) w.flyover(character.position, bx, bz);
     };
 
     const post = new PostChain(gfx, rig, depthPass, sky);
@@ -1307,9 +1315,6 @@ async function boot() {
                         Math.sin(f) * 16, 0, Math.cos(f) * 16
                     );
                 }
-                // The escorts go when the player does — the opening's last
-                // beat, all four craft opening up together.
-                for (const w of wingmen) w.releaseFormation();
             }
             // The player's entrance: velocity fed straight into the
             // controller, which integrates, terrain-snaps and banks exactly
@@ -1724,6 +1729,10 @@ async function boot() {
     await loading.phase("loading audio", 0.96);
     await audioReady;
     await filmReady;
+    // The second transmission is fetched behind the boot with everything
+    // else, so the moment it is called for it plays local bytes — a clip that
+    // buffered mid-battle would arrive after the moment that earned it.
+    await crossReady;
 
     // One click to enter, and that click is also the gesture that makes sound
     // legal. `unlock()` is issued from inside the handler — hence the callback —
