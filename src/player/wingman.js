@@ -45,6 +45,18 @@
  *             real radius rather than a chase it can never win.
  *   the bank  turn rate is budgeted by lateral acceleration, so a fast pass
  *             banks wide and a slow repositioning turn stays tight.
+ *   the miss  the machines are *solid*. A look-ahead down the craft's own
+ *             velocity finds any hull the projected path would enter and
+ *             hands the dodge the stick, plus a pull-up over the crown when
+ *             there is time to fly one — see `_avoidance`. The pass's own
+ *             target is given a much shorter guard than everything else,
+ *             one that cannot reach past `BREAK_AT`, so the attack still
+ *             closes with the guns open and only the pull-off is bent.
+ *
+ * And the way one dies (see the `downed` block): the fall is a *scripted*
+ * two-stage crash choreographed onto `speeder-crash-2.mp3` — the craft
+ * windmills down to a first ground contact at exactly 4.0 s after the
+ * killing hit, skips off the snow, and comes down for good at 5.5 s.
  */
 
 import * as THREE from "three";
@@ -86,7 +98,113 @@ const TROOPER_PASS_CHANCE = 0.65;
  *  that the smoothed path never has the hull kissing a dune crest. */
 const TROOPER_RUN_ALT = 3.5;
 
+/* ------------------------------------------------------------------ avoidance
+ * Nothing ever told SimPilot that the machines are solid, so it flew straight
+ * through the volume they occupy — at the attack altitude (9*walkerScale, so
+ * ~14 m off the deck) that is precisely leg height, and contact was routine
+ * rather than accidental. These are the numbers of the fix.
+ *
+ * The ring is horizontal and centred on the machine. The AT-AT's leg capsules
+ * plant within ~3.5*scale of the centre at r 0.75*scale, and the body capsule
+ * (r 5.0*scale, axis at 17.5*scale) reaches ~13.5*scale fore and aft, so the
+ * worst horizontal extent a craft can meet is a shade under 14*scale. The
+ * push falls LINEARLY to zero at the ring edge, so the ring is a clearance
+ * the pilot settles into flying past at, not a wall it bounces off — which
+ * is why it has to be comfortably wider than the hull it protects. Swept
+ * against the real capsules over 800 forty-second flights through a
+ * six-machine field, 22 is the knee: 15 leaves a fifth of the contacts,
+ * 25 and 28 buy nothing and start costing gun time.
+ */
+const AVOID_R = 22;              // metres per unit walkerScale, non-targets
+/** Seconds of the craft's own flight the look-ahead covers. */
+const AVOID_AHEAD = 1.6;
+
+/* The pass's target gets its own pair, and this is the seam that keeps the
+ * choreography intact. A committed run must fly AT the machine, hold the guns
+ * from FIRE_FAR (260 m) down to BREAK_AT (110 m) and only then pull off. The
+ * trick is the LOOK-AHEAD, not the ring: at 0.85 s the target's guard reaches
+ * 0.85 * 46 + 18*1.3 ~= 63 m at the break's own speed — barely half of
+ * BREAK_AT. It is therefore arithmetically incapable of touching the approach
+ * or the attack, because being inside its reach at all means the break has
+ * already fired. Given that, the ring itself can be generous, and is: 18
+ * makes the pull-off actually clear the legs it is pulling off from. Measured
+ * cost to the fire window across 800 flights: nil. */
+const AVOID_R_TGT = 18;
+const AVOID_AHEAD_TGT = 0.85;
+
+/** The threat weight is shaped by a square root before it reaches the stick.
+ *  Raw, it is a product of two linear falloffs and spends most of its life
+ *  around 0.2 — a shrug. Rooted, a fifth of a threat is already a firm half
+ *  of a correction, which is what stops the dodge stalling halfway out.
+ *
+ *  `AUTH` is how much of the stick the dodge takes over at a given shaped
+ *  weight, `STICK` how hard it pushes once it has it. Blending authority
+ *  rather than adding a heading bias matters: during an attack the carrot is
+ *  pulling the nose back toward a target *beyond* the obstacle, and a bias
+ *  just fights it to a draw. Authority means the pilot stops flying the
+ *  target for a beat and flies the gap — which is what a pilot does. */
+const AVOID_AUTH = 2.2;
+const AVOID_STICK = 1.6;
+/** How fast the dodge slews in and out, 1/s. Fast (~0.14 s) so it bites, but
+ *  eased so the hull banks into it instead of snapping. */
+const AVOID_SLEW = 7;
+
+/* The pull-up. This one is counter-intuitive and the geometry decides it: the
+ * body capsule's floor sits at 12.5*scale (16.3 m at the default), so a pilot
+ * cruising at 14 m is already UNDER the hull, threading four thin leg struts.
+ * Climbing halfway does not lift it over the machine, it lifts it INTO the
+ * 6.5 m-radius body — measurably worse than not climbing at all (a partial
+ * climb bias cost 3400 contact-frames against 1950 for pure turning).
+ *
+ * So the climb is all-or-nothing: it is commanded only when there is enough
+ * warning to actually top the crown before arrival, and when it is commanded
+ * it goes for full clearance. Below that gate the craft holds its run
+ * altitude and lets the turn do the work. The result is the pull-up the eye
+ * wants — the craft really does go over the top, ~34 m against a 29 m
+ * machine — on the ~7 % of frames where it can be flown honestly. */
+const AVOID_CLIMB_T = 1.2;       // seconds of warning a pull-up needs
+const AVOID_CLEAR = 6;           // metres of daylight over the crown
+/** Slower than the turn: a pull-up is a pull-up, not a flinch. */
+const AVOID_CLIMB_SLEW = 4;
+/** Seconds a committed pull-up is held past the machine's arrival — the
+ *  climb is a decision, not a proximity readout. See `_avoidance`. */
+const AVOID_CLIMB_HOLD = 0.9;
+/** Already this far above the hull's crown? Then there is nothing to avoid. */
+const AVOID_OVER = 4;
+
+/* ---------------------------------------------------------------- the crash
+ * The fall is choreographed, not simulated, because it has to land on the
+ * beats of `speeder-crash-2.mp3`: that sample is fired ONCE at the killing
+ * hit and its own timeline carries the next seven and a half seconds — a
+ * first ground impact at 4.0 s, the final crash at 5.5 s, debris after. The
+ * old descent (an exponential ease toward climb -4) reached the snow in
+ * ~3.4 s from climb 12 and drifted with the altitude the craft happened to
+ * be carrying, which is exactly the thing a fixed soundtrack cannot forgive.
+ *
+ * So both stages are *normalised* profiles in `_downT`: stage one maps
+ * whatever climb the hit interrupted onto `DOWN_CONTACT` at u = 1, and u = 1
+ * is 4.0 s by definition, from any starting height. See the `downed` block. */
+const DOWN_FALL_T = 4.0;         // killing hit -> first ground contact, s
+const DOWN_SKIP_T = 1.5;         // first contact -> final crash, s
+/**
+ * The climb at which the existing contact test (`position.y - groundY < 1.1`)
+ * trips: the downed block places the hull at `groundY + 2.6 + climb`, so
+ * contact is climb < -1.5. Both profiles are aimed at exactly this value at
+ * the end of their normalised time, and are deliberately left UNCLAMPED past
+ * it — the first frame beyond the mark dips below and fires, so the event
+ * lands within one dt of the beat instead of hovering one frame short of it.
+ */
+const DOWN_CONTACT = -1.5;
+/** Metres of climb the skip regains at the top of its arc. */
+const DOWN_HOP = 3.5;
+/** Horizontal speed kept through the skip — a third of it goes into the snow. */
+const DOWN_SKIP_KEEP = 0.65;
+
 const _toT = new THREE.Vector3();
+
+/** Scratch for `_avoidance`'s worst-threat reduction — module-level so the
+ *  per-frame search allocates nothing. Written and read inside one call. */
+const _av = { w: 0, side: 0, top: 0, h: 0, tHit: 0 };
 
 /**
  * One tick of a burning craft's trail: a dark smoke puff, and — when the
@@ -211,12 +329,33 @@ class SimPilot {
         this._cruiseGround = NaN;
         this._lift = 0.4;
 
+        /** Extra herds the avoidance sweeps beyond `walkers` — see
+         *  `Wingman.setAvoidHerds`. Empty unless somebody wires it. */
+        this._avoidHerds = null;
+        /** The avoidance's eased stick command (signed, -1..1), how much of
+         *  the stick it currently owns (0..1), and the metres of pull-up it
+         *  is adding to the phase's climb. See `_avoidance`. */
+        this._avoidCmd = 0;
+        this._avoidAuth = 0;
+        this._avoidClimb = 0;
+        this._avoidClimbHold = 0;
+
         /** Going in: the floor stops holding and the craft settles into the
-         *  snow. Set by the damage ladder's third hit; `crashed` latches for
-         *  one frame at ground contact, then the airframe lies as a burning
-         *  wreck for `_wreckT` seconds before `respawn` refills the seat. */
+         *  snow. Set by the damage ladder's third hit through `goDown`.
+         *
+         *  Two latches come back out of the fall, each true for exactly one
+         *  frame and cleared by whoever consumes it (the `Wingman` wrapper):
+         *  `bounced` at the first ground contact (4.0 s — the craft skips and
+         *  keeps going) and `crashed` at the final one (5.5 s — the wreck
+         *  pool takes the hull and this seat respawns from deep). */
         this.downed = false;
         this.crashed = false;
+        this.bounced = false;
+        /** 0 = the long fall, 1 = past the skip and on the way to the end. */
+        this._downStage = 0;
+        /** Seconds since the killing hit, and the climb it interrupted. */
+        this._downT = 0;
+        this._downClimb0 = 0;
 
         /** Collision aftermath: a yaw kick ringing down into the heading,
          *  and a beat of blunted steering while the pilot recovers the line.
@@ -231,8 +370,15 @@ class SimPilot {
     respawn() {
         this.downed = false;
         this.crashed = false;
+        this.bounced = false;
+        this._downStage = 0;
+        this._downT = 0;
         this._impactSpin = 0;
         this._scramble = 0;
+        this._avoidCmd = 0;
+        this._avoidAuth = 0;
+        this._avoidClimb = 0;
+        this._avoidClimbHold = 0;
         this._hitTroopers = Math.random() < this._trooperChance;
         this._lock = this._pickTarget();
         const cx = this._lock ? this._lock.position.x : this.anchor.x;
@@ -375,6 +521,44 @@ class SimPilot {
         this._wantX = bx;
         this._wantZ = bz;
         this._blendT = 0;
+        this._avoidCmd = 0;
+        this._avoidAuth = 0;
+        this._avoidClimb = 0;
+        this._avoidClimbHold = 0;
+    }
+
+    /**
+     * Going in. One door into the downed pipeline, so every entry path — the
+     * damage ladder's third bolt and the collision pass's 'crash' verdict —
+     * arms the crash choreography identically and nothing can be left over
+     * from a previous fall.
+     *
+     * `_downClimb0` is the whole trick behind the 4.0 s mark: the descent is
+     * a normalised profile from *this* climb to the deck, so wherever the
+     * killing hit caught the craft (the run holds 9*scale, the break peaks at
+     * 15*scale, the orbit sits at 12) it still touches the snow on the beat.
+     *
+     * @param {number} [spinDir] which way it rolls in; random if omitted
+     */
+    goDown(spinDir) {
+        this.downed = true;
+        this.crashed = false;
+        this.bounced = false;
+        this._downT = 0;
+        this._downStage = 0;
+        // Floored a clear metre above the contact climb: the stage-one
+        // profile interpolates from here DOWN to DOWN_CONTACT, and a craft
+        // somehow caught at or below the deck would otherwise be handed a
+        // profile that rises into it.
+        this._downClimb0 = Math.max(DOWN_CONTACT + 1, this.climb);
+        this._rollRate = 0.6;
+        this._spinDir = spinDir || (Math.random() < 0.5 ? -1 : 1);
+        this._impactSpin = 0;
+        this._scramble = 0;
+        this._avoidCmd = 0;
+        this._avoidAuth = 0;
+        this._avoidClimb = 0;
+        this._avoidClimbHold = 0;
     }
 
     /**
@@ -398,6 +582,182 @@ class SimPilot {
         this._scramble = Math.max(this._scramble || 0, scrambleSec || 0);
     }
 
+    /**
+     * One herd's worth of the look-ahead sweep. Folds the single most urgent
+     * threat into the module-level `_av` scratch — the *worst*, not the sum,
+     * because two machines on opposite sides of the nose summing to zero is
+     * how a pilot flies into the one it decided to split the difference with.
+     *
+     * The test is a horizontal ring around each machine, sampled against the
+     * craft's own velocity vector: `along` is how far down the flight path
+     * the machine sits, `lat` how far off it. A machine behind the craft, or
+     * beyond the look-ahead, or further off the line than the ring, or
+     * already comfortably below the hull, is not a threat and costs one
+     * branch. Everything else contributes
+     *
+     *     weight = (1 - along/reach) * (1 - |lat|/R)
+     *
+     * — urgency times how squarely the path is aimed at it. Both terms fall
+     * linearly to zero at the edges, so this is a clearance controller, not a
+     * wall: the craft settles into flying *past* at R metres rather than
+     * bouncing off an invisible bubble.
+     *
+     * @param {import("../walkers/walker.js").WalkerHerd|null} herd
+     * @param {any} target the machine this pass owns, exempted into its own
+     *   much tighter guard so the strafing run survives
+     * @param {number} px @param {number} pz @param {number} py hull position
+     * @param {number} ux @param {number} uz unit flight path, XZ
+     * @param {number} rx @param {number} rz its right-hand normal — positive
+     *   steer turns toward this, so a machine at +lat is escaped by -1
+     * @param {number} speedNow m/s
+     */
+    _sweepHerd(herd, target, px, pz, py, ux, uz, rx, rz, speedNow) {
+        if (!herd || !herd.walkers) return;
+        if (herd.tune && herd.tune.visible && !herd.tune.visible()) return;
+        const hScale = herd.tune && herd.tune.scale ? herd.tune.scale() : 1;
+        const top = (herd.height || 0) * hScale;
+        const n = Math.min(herd.count, herd.walkers.length);
+        const v = Math.max(12, speedNow);
+        for (let i = 0; i < n; i++) {
+            const w = herd.walkers[i];
+            if (!w || !w.position || w.oneshot) continue;
+            const isTgt = w === target;
+            const R = (isTgt ? AVOID_R_TGT : AVOID_R) * hScale;
+            const reach = (isTgt ? AVOID_AHEAD_TGT : AVOID_AHEAD) * v + R;
+            const dx = w.position.x - px;
+            const dz = w.position.z - pz;
+            const along = dx * ux + dz * uz;
+            // Only what is still AHEAD. A machine level with the cockpit or
+            // behind it cannot be flown into — the craft is leaving it — and
+            // scoring those was making the dodge strongest against the one
+            // threat that had already been survived, then reversing the stick
+            // at full authority the moment it dropped out of range.
+            if (along < 0 || along > reach) continue;
+            const lat = dx * rx + dz * rz;
+            const off = Math.abs(lat);
+            if (off > R) continue;
+            // Over the crown with daylight to spare: nothing to dodge.
+            if (py > w.position.y + top + AVOID_OVER) continue;
+            const wgt = (1 - along / reach) * (1 - off / R);
+            if (wgt > _av.w) {
+                _av.w = wgt;
+                _av.side = lat >= 0 ? -1 : 1;
+                _av.top = w.position.y + top;
+                _av.h = top;
+                _av.tHit = Math.max(0, along) / v;
+            }
+        }
+    }
+
+    /**
+     * Walker avoidance. The headline of the flying: the machines are solid,
+     * and until now nothing in the steering knew it — SimPilot held its line
+     * through the exact volume a 29 m AT-AT occupies while cruising at 9-15 m,
+     * which is leg height, so contact was routine instead of accidental.
+     *
+     * Two things happen, and they are not symmetric. The turn is the fix: the
+     * dodge takes over the stick in proportion to the threat, so for a beat
+     * the pilot stops flying the target and flies the gap. The pull-up is the
+     * *read* — and, per `AVOID_CLIMB_T`, it is only commanded when it can
+     * honestly top the machine, because a half-climb off a 14 m run lifts the
+     * craft out of the leg struts and into the solid belly.
+     *
+     * What it must not do is stop the pilot attacking, so the pass's own
+     * target is swept with `AVOID_R_TGT`/`AVOID_AHEAD_TGT` instead — a guard
+     * whose reach is under 65 m, half of BREAK_AT, so being inside it at all
+     * means the break has already fired. The whole approach, the whole attack
+     * and the entire fire window (FIRE_FAR 260 -> FIRE_NEAR 110) are
+     * untouchable by construction; only the pull-off is ever bent, and that
+     * is the collision the user is watching.
+     *
+     * Off entirely while `downed` — the ballistic owns the craft — which is
+     * free here, since the downed block returns long before this is reached.
+     *
+     * @param {number} dt
+     * @param {any} target the pass's locked machine, or null
+     * @param {number} speedNow m/s
+     */
+    _avoidance(dt, target, speedNow) {
+        _av.w = 0;
+        _av.side = 0;
+        _av.top = 0;
+        _av.h = 0;
+        _av.tHit = 0;
+        if (S.wingAvoid !== false) {
+            const sp = Math.hypot(this.velocity.x, this.velocity.z);
+            // Look down the velocity, not the nose: in a hard bank the two
+            // differ by the slip angle, and it is the velocity that arrives.
+            let ux, uz;
+            if (sp > 1) { ux = this.velocity.x / sp; uz = this.velocity.z / sp; }
+            else { ux = Math.sin(this.facing); uz = Math.cos(this.facing); }
+            const rx = uz, rz = -ux;
+            const px = this.position.x, pz = this.position.z, py = this.position.y;
+            this._sweepHerd(this.walkers, target, px, pz, py, ux, uz, rx, rz, speedNow);
+            // The troopers are deliberately absent: they are man-sized, they
+            // are what the low runs exist to strafe, and a scale-derived ring
+            // around each of thirty of them would wall the squads off.
+            if (this._avoidHerds) {
+                for (let i = 0; i < this._avoidHerds.length; i++) {
+                    const h = this._avoidHerds[i];
+                    if (h && h !== this.walkers) {
+                        this._sweepHerd(h, target, px, pz, py, ux, uz, rx, rz, speedNow);
+                    }
+                }
+            }
+        }
+
+        // The stick command and how much of the stick it owns, both eased so
+        // the hull banks into the dodge rather than snapping into it.
+        const shaped = _av.w > 0 ? Math.sqrt(_av.w) : 0;
+        this._avoidCmd = expDamp(
+            this._avoidCmd, _av.side * shaped, AVOID_SLEW, dt
+        );
+        this._avoidAuth = expDamp(
+            this._avoidAuth, Math.min(1, shaped * AVOID_AUTH), AVOID_SLEW, dt
+        );
+        if (this._avoidAuth < 1e-3) { this._avoidAuth = 0; this._avoidCmd = 0; }
+
+        // The pull-up, all or nothing — and, once started, *committed*.
+        //
+        // `tHit` is how many seconds of flight still separate the craft from
+        // the machine, so it counts down to zero as the machine arrives. A
+        // bare `tHit > AVOID_CLIMB_T` test therefore opens the gate far out
+        // and shuts it exactly 1.2 s before the encounter — commanding the
+        // climb only while it is unnecessary and releasing it just in time to
+        // sink back into the leg struts. So the decision to go over the top
+        // is made once, at the range where it can still be flown honestly,
+        // and then *held* until the machine is genuinely behind: a climb is a
+        // manoeuvre a pilot commits to, not a proximity readout.
+        let bias = 0;
+        if (_av.w > 0) {
+            const clear = _av.top + AVOID_CLEAR - this.groundY - 2.6;
+            // Cap: no dodge ever needs more climb than the machine is tall
+            // plus its clearance. Derived from the threat's own height rather
+            // than a constant, so it stays honest at every walker scale, and
+            // it only ever binds when the craft and the machine are standing
+            // on wildly different ground.
+            const want = Math.min(
+                _av.h + AVOID_CLEAR, Math.max(0, clear - this._climbWant)
+            );
+            if (_av.tHit > AVOID_CLIMB_T) {
+                // Far enough out to commit: take the climb, and book the hold
+                // through the arrival plus a beat on the far side.
+                this._avoidClimbHold = Math.max(
+                    this._avoidClimbHold, _av.tHit + AVOID_CLIMB_HOLD
+                );
+                bias = want;
+            } else if (this._avoidClimbHold > 0) {
+                // Already committed and now close: hold the climb in. This is
+                // the window the machine is actually crossed in.
+                bias = want;
+            }
+        }
+        this._avoidClimbHold = Math.max(0, this._avoidClimbHold - dt);
+        this._avoidClimb = expDamp(this._avoidClimb, bias, AVOID_CLIMB_SLEW, dt);
+        if (this._avoidClimb < 0.05) this._avoidClimb = 0;
+        this._climbWant += this._avoidClimb;
+    }
+
     /** @param {number} rawDt */
     update(rawDt) {
         const dt = Math.min(rawDt || 0, 1 / 30);
@@ -415,7 +775,14 @@ class SimPilot {
             // below stays honest — a spun-up craft still lands on time.
             this._impactSpin = 0;
             this._scramble = 0;
-            this._downT = (this._downT ?? 0) + dt;
+            // The crash clock runs on RAW time, alone in this file. Everything
+            // else here is clamped to 1/30 so a stalled frame cannot teleport
+            // a craft — but this choreography is cut to a recording that is
+            // already playing on the audio clock, and a sim second that is
+            // shorter than a real one slides the bounce and the crash off
+            // their beats. The frame's own motion still integrates on the
+            // clamped step; only the beats are told the truth.
+            this._downT = (this._downT ?? 0) + Math.min(rawDt || 0, 0.25);
             const dir = this._spinDir || 1;
             // The roll accelerates as control bleeds away: a slow wing-over
             // becoming a full rotation every couple of seconds. `lean` maps
@@ -444,16 +811,56 @@ class SimPilot {
                 ? this.terrain.heightAt(this.position.x, this.position.z) : 0;
             this.pathY = this.groundY;
             this.lift01 = 0;
-            // A steady dying descent — no floor, the deck simply arrives.
-            this.climb = expDamp(this.climb, -4, 0.55, dt);
+
+            // ---- the scripted descent, on the sound's beats ----------------
+            // Stage one: a normalised profile from the climb the hit
+            // interrupted down to DOWN_CONTACT, reached at u = 1 — which is
+            // DOWN_FALL_T seconds, by construction, from ANY starting height.
+            // The shape is s = 0.6u^2 + 0.4u^3: s'(0) = 0, so the craft holds
+            // its altitude for the first beat and only then drops its nose,
+            // and s'(1) = 2.4, so it arrives steepening rather than settling.
+            // A ship caught high at the top of a break falls faster than one
+            // caught in the weeds, and both touch the snow at 4.0 s.
+            //
+            // Stage two: the skip. A half-sine arc, skewed early by the 0.7
+            // exponent so it peaks about 0.55 s after the bounce and is back
+            // on the deck at v = 1 — DOWN_SKIP_T later, i.e. 5.5 s.
+            //
+            // Both are left unclamped past their end so the first frame
+            // beyond the mark dips under the contact threshold and fires.
+            if (this._downStage === 0) {
+                const u = Math.max(0, this._downT / DOWN_FALL_T);
+                const s = u * u * (0.6 + 0.4 * u);
+                this.climb = this._downClimb0
+                    + (DOWN_CONTACT - this._downClimb0) * s;
+            } else {
+                const v = Math.max(0, (this._downT - DOWN_FALL_T) / DOWN_SKIP_T);
+                this.climb = DOWN_CONTACT
+                    + DOWN_HOP * Math.sin(Math.PI * Math.pow(v, 0.7));
+            }
             this.position.y = Math.max(
                 this.groundY + 2.6 + this.climb, this.groundY + 0.3
             );
             if (this.position.y - this.groundY < 1.1) {
-                // Ground contact. The wreck pool takes the hull from here —
-                // this pilot's seat refills immediately from deep.
-                this.crashed = true;
-                this.downed = false;
+                if (this._downStage === 0) {
+                    // t = 4.0 s. The craft strikes the snow and *skips* — it
+                    // is not over, it is the first of two. Momentum stays,
+                    // minus a third of it into the drift; the roll picks up
+                    // the energy of the hit; and `bounced` latches for the
+                    // frame so the effects layer can throw up the snow and
+                    // dig the first scar. `crashed` is NOT set: the wreck
+                    // pipeline belongs to the second contact alone.
+                    this._downStage = 1;
+                    this.bounced = true;
+                    this.velocity.x *= DOWN_SKIP_KEEP;
+                    this.velocity.z *= DOWN_SKIP_KEEP;
+                    this._rollRate = Math.min(2.4, (this._rollRate || 0.6) + 0.5);
+                } else {
+                    // t = 5.5 s. Ground contact for good. The wreck pool takes
+                    // the hull from here — this pilot's seat refills from deep.
+                    this.crashed = true;
+                    this.downed = false;
+                }
             }
             return;
         }
@@ -597,6 +1004,14 @@ class SimPilot {
         this._wantX = wantX;
         this._wantZ = wantZ;
 
+        // ---- walker avoidance ----------------------------------------------
+        // After the phase has said where it wants to go and what altitude it
+        // wants to hold, and before any of it reaches the stick: the pilot
+        // looks down its own flight path, and if a machine is standing in it,
+        // turns off and climbs over. `_climbWant` is still just a target here
+        // — the ease at the bottom of the update turns it into a pull-up.
+        this._avoidance(dt, target, speedNow);
+
         // ---- collision aftermath -------------------------------------------
         // The impact's yaw kick rings down into the heading, and while the
         // scramble runs the pilot's corrections are blunt — the craft
@@ -614,7 +1029,21 @@ class SimPilot {
         // ---- steering: turn-rate limited, slewed like the player's stick ---
         const wantHeading = Math.atan2(wantX - this.position.x, wantZ - this.position.z);
         const err = wrapAngle(wantHeading - this.facing);
-        const steerRaw = Math.max(-1, Math.min(1, err * gain));
+        let steerRaw = Math.max(-1, Math.min(1, err * gain));
+        // The dodge takes the stick, it does not argue with it. Biasing the
+        // wanted heading instead was tried and fails for a reason worth
+        // recording: on an attack run the carrot is pulling the nose toward a
+        // target BEYOND the obstacle, so a bias and the attraction fight to a
+        // draw and the craft creeps past at whatever clearance the stalemate
+        // happens to give. Blending authority means the pilot lets go of the
+        // target for a beat. Everything downstream is untouched — the slew,
+        // the lateral-acceleration turn budget, the bank that falls out of
+        // the resulting lateral acceleration — so a dodge still reads as a
+        // flown turn and not as a nudge on the transform.
+        if (this._avoidAuth > 0) {
+            const dodge = Math.max(-1, Math.min(1, this._avoidCmd * AVOID_STICK));
+            steerRaw += (dodge - steerRaw) * Math.min(1, this._avoidAuth);
+        }
         const prevSteer = this._steer;
         this._steer = expDamp(this._steer, steerRaw, 12, dt);
         this.steerRate = (this._steer - prevSteer) / dt;
@@ -713,9 +1142,18 @@ export class Wingman {
          * The damage ladder: 0 clean, 1 black smoke, 2 fire, 3 going in.
          * `effects` is wired by main — the smoke pool, the enemy bolt pools
          * that can hit this craft, and the crash handler.
+         * `onBounce` is the first of the crash's two ground contacts — the
+         * 4.0 s skip. It fires once, the craft is still airborne and still
+         * rolling when it does, and no crash sound belongs on it: the single
+         * `speeder-crash-2.mp3` fired at `onKillHit` already contains that
+         * impact. Snow and a scar, nothing more.
+         *
          * @type {{ smoke: import("../vfx/smokeTrails.js").SmokeTrails,
          *          enemy: (import("../walkers/bolts.js").Bolts|null)[],
-         *          onCrash?: (x:number,y:number,z:number) => void } | null}
+         *          onKillHit?: (x:number,y:number,z:number) => void,
+         *          onBounce?: (x:number,y:number,z:number,facing:number) => void,
+         *          onCrash?: (x:number,y:number,z:number,facing:number) => void
+         *        } | null}
          */
         this.effects = null;
         this.damage = 0;
@@ -743,12 +1181,7 @@ export class Wingman {
             );
         }
         if (this.damage >= 3) {
-            P.downed = true;
-            P._downT = 0;
-            P._rollRate = 0.6;
-            P._spinDir = Math.random() < 0.5 ? -1 : 1;
-            P._impactSpin = 0;
-            P._scramble = 0;
+            P.goDown();
             // The killing hit bursts on the airframe itself — the explosion
             // the craft then flies out of, rolling, on its unchanged line.
             fx.onKillHit?.(P.position.x, P.position.y, P.position.z);
@@ -781,14 +1214,7 @@ export class Wingman {
             // craft rolls out of the burst on its unchanged line, and the
             // impact's own spin picks which way it rolls in.
             this.damage = 3;
-            P.downed = true;
-            P._downT = 0;
-            P._rollRate = 0.6;
-            P._spinDir = P._impactSpin
-                ? Math.sign(P._impactSpin)
-                : (Math.random() < 0.5 ? -1 : 1);
-            P._impactSpin = 0;
-            P._scramble = 0;
+            P.goDown(P._impactSpin ? Math.sign(P._impactSpin) : 0);
             this.effects?.onKillHit?.(x, y, z);
             return;
         }
@@ -856,6 +1282,16 @@ export class Wingman {
             }
         }
 
+        // The skip, 4.0 s after the killing hit. SimPilot has no line to the
+        // effects — the wrapper owns those — so it raises a one-frame latch
+        // exactly the way it raises `crashed`, and the wrapper consumes it
+        // here and forwards it on. The craft is still flying when this fires:
+        // no wreck, no respawn, no ladder reset, and above all no sound.
+        if (P.bounced) {
+            P.bounced = false;
+            fx.onBounce?.(P.position.x, P.position.y, P.position.z, P.facing);
+        }
+
         // Ground contact: the burst, the crater, the sound. The wreck pool
         // takes over the hull on the ground (and the pilot thrown beside it);
         // this seat's craft respawns from deep, and the fate token passes to
@@ -874,6 +1310,26 @@ export class Wingman {
     /** Start this ship on the opening flyover — see SimPilot.flyover. */
     flyover(player, bx, bz) {
         this.pilot.flyover(player, bx, bz);
+    }
+
+    /**
+     * Widen the avoidance sweep beyond the herd this pilot targets.
+     *
+     * OPTIONAL, and nothing depends on it: the pilot already dodges the AT-AT
+     * herd it was handed for targeting, which is where the collisions the
+     * user is complaining about come from. But the field carries a *second*
+     * AT-AT line and a rank of AT-STs that the wingman constructor never sees,
+     * and the craft will still fly through those. Anyone holding the full herd
+     * list — the collision pass has exactly it — can close that gap with one
+     * call. Herds already swept are skipped, so passing the whole list is
+     * safe. Man-sized herds must NOT be passed: the ring is sized off the
+     * herd's own scale but a squad of infantry has no business deflecting a
+     * strafing run aimed at it.
+     *
+     * @param {import("../walkers/walker.js").WalkerHerd[]|null} herds
+     */
+    setAvoidHerds(herds) {
+        this.pilot._avoidHerds = herds && herds.length ? herds : null;
     }
 
     get triangles() { return this.craft.triangles; }

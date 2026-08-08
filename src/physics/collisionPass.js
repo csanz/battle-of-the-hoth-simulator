@@ -63,6 +63,29 @@ const SCRAPE_GAP = 0.22;
 const SQUASH_DIST = 6;
 const SQUASH_ALT = 3.2;
 const SQUASH_GAP = 0.4;
+/**
+ * The capsule kinds that are an Imperial machine's own body — the legs, the
+ * belly and the head of an AT-AT, and the AT-ST's single pill. A craft
+ * striking one of these makes a *different noise* from a craft striking
+ * anything else: armour plate and servo, not the fuel-and-fire report of a
+ * hull going in. `wreck` is deliberately absent — a wreck is a dead
+ * snowspeeder, so hitting one is speeder-on-speeder and keeps the old sound.
+ * A Set rather than a chain of `===` so adding a kind is one edit, and it is
+ * built once at module scope, never per contact.
+ */
+const MACHINE_KINDS = new Set(["leg", "body", "head", "atst"]);
+/**
+ * Gain for the hull strike by severity. `speeder-hit-walker.mp3` is a single
+ * dry impact with no tail, so unlike the explosion it can be leaned on: a
+ * glancing 'hit' is under half a full one, and a 'crash' into a leg is the
+ * whole sample. Scrapes stay silent — the snow spray is the scrape.
+ */
+const HULL_SFX_GAIN = { hit: 0.45, crash: 1.0 };
+/** Metres to nothing for the cannons' own report — the reference reach every
+ *  local noise borrows, and what the dry hull strike uses. */
+const SHOT_AUDIBLE = 420;
+/** …and for an airframe exploding, which carries further. See `_bang`. */
+const CRASH_AUDIBLE = 900;
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -378,7 +401,7 @@ export class CollisionPass {
 
         this._contactFx(
             res.severity, best.px, best.py, best.pz, s.wing === null, nx, nz,
-            s, res.normalSpeed
+            s, res.normalSpeed, cap.kind
         );
         if (s.wing === null) {
             if (res.severity !== "scrape") this._playerLadder(res.severity);
@@ -458,7 +481,7 @@ export class CollisionPass {
         this._contactFx(
             sev, hit.px, hit.py, hit.pz,
             a.wing === null || b.wing === null, nx, nz,
-            a.wing === null ? a : b, resA.normalSpeed
+            a.wing === null ? a : b, resA.normalSpeed, "craft"
         );
         if (a.wing === null || b.wing === null) {
             if (sev !== "scrape") this._playerLadder(sev);
@@ -510,8 +533,18 @@ export class CollisionPass {
      * gentle end is rate-limited per craft and its trauma scales with the
      * closing speed that earned it; a real hit or crash always speaks,
      * because those separate the hulls and cannot repeat.
+     *
+     * `kind` is what was struck — the capsule's kind for a world contact,
+     * `"craft"` for hull-on-hull, `"terrain"` for a slam. It picks the voice
+     * and nothing else: hitting an Imperial machine is a metal strike
+     * (`speederHitWalker`), while another speeder, a wreck or a rising face
+     * of ice is the old fuel-and-fire report (`speederCrash`). The look of
+     * the contact — snow, smoke, fire — does not care what was hit.
+     *
+     * @param {'scrape'|'hit'|'crash'} sev
+     * @param {string} [kind] struck capsule kind; see `MACHINE_KINDS`
      */
-    _contactFx(sev, px, py, pz, isPlayer, nx, nz, slot, closing) {
+    _contactFx(sev, px, py, pz, isPlayer, nx, nz, slot, closing, kind) {
         if (sev === "scrape") {
             if (slot && slot.fxT > 0) return;
             if (slot) slot.fxT = SCRAPE_GAP;
@@ -540,8 +573,11 @@ export class CollisionPass {
                 );
             }
         }
+        // Armour or airframe? One question, asked once, answered for both rungs.
+        const hull = MACHINE_KINDS.has(kind ?? "");
         if (sev === "hit") {
-            this._bang(px, pz, 0.25, 1.1);
+            if (hull) this._bang(px, pz, HULL_SFX_GAIN.hit, 1.0, "speederHitWalker");
+            else this._bang(px, pz, 0.25, 1.1);
             if (this.smoke) {
                 for (let i = 0; i < 3; i++) {
                     this.smoke.emit(
@@ -555,18 +591,46 @@ export class CollisionPass {
             }
         } else if (sev === "crash") {
             this.explosions?.impact(px, py - 2.4, pz, true, true);
-            this._bang(px, pz, 1.0, 1.0);
+            if (hull) this._bang(px, pz, HULL_SFX_GAIN.crash, 1.0, "speederHitWalker");
+            else this._bang(px, pz, 1.0, 1.0);
         }
     }
 
-    /** The crash report, at the level and delay its distance earns. */
-    _bang(px, pz, gain, rate) {
+    /**
+     * The contact report, at the level and delay its distance earns — the
+     * one place in this file that speaks, so the distance model is written
+     * once and every voice obeys it.
+     *
+     * The model is the walker cannons', to the letter, because the ear has
+     * to be able to place a crash against the artillery it is standing in:
+     * `near` falls linearly to nothing at 420 m and is then **cubed**, which
+     * is the whole point — a squared falloff still reads as loud from half
+     * the field away, and the battle line is a kilometre wide. The delay is
+     * honest: 343 m/s, capped at 1.6 s so a distant hit is still recognisably
+     * that hit and not a stray noise a beat later.
+     *
+     * The one place it departs from the cannons is the *reach*, and only for
+     * the explosion: a chin cannon stops mattering at 420 m, but a craft
+     * coming apart is the loudest thing out there, so it carries to
+     * `CRASH_AUDIBLE`. The curve is identical either way — a far one is
+     * faint, which is the whole ask — it simply does not fall off a cliff at
+     * the range the fight is actually fought at. The dry hull strike keeps
+     * the cannons' reach, because that is genuinely a local noise.
+     *
+     * @param {number} px @param {number} pz world contact, XZ
+     * @param {number} gain pre-distance level, 0..1
+     * @param {number} rate playback rate
+     * @param {string} [key] manifest key; the fuel-and-fire report by default
+     */
+    _bang(px, pz, gain, rate, key = "speederCrash") {
         if (!this.audio || !this.character) return;
         const d = Math.hypot(
             px - this.character.position.x, pz - this.character.position.z
         );
-        const near = Math.max(0, 1 - d / 420);
-        this.audio.play("speederCrash", {
+        const audible = key === "speederCrash" ? CRASH_AUDIBLE : SHOT_AUDIBLE;
+        const near = Math.max(0, 1 - d / audible);
+        if (near <= 0) return; // out of earshot: do not spend a voice on it
+        this.audio.play(key, {
             gain: gain * near * near * near,
             rate,
             delay: Math.min(1.6, d / 343),
@@ -620,7 +684,7 @@ export class CollisionPass {
         const hull = this.speeder.position;
         this._contactFx(
             sev, hull.x, hull.y - 1.2, hull.z, true, slam.nx, slam.nz,
-            this.slots[0], slam.closing
+            this.slots[0], slam.closing, "terrain"
         );
         if (sev !== "scrape") {
             c.applyImpact(c.velocity.x, c.velocity.z, 0, SCRAMBLE[sev]);

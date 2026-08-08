@@ -312,8 +312,8 @@ export const S = {
     /** Paint the jet plume flat magenta so its true footprint is visible
      *  while the Jet sliders are being dialled. */
     jetDebug: false,
-    burnBackZ: 2.4,
-    burnY: 0.95,
+    burnBackZ: 2.6,
+    burnY: 0.25,
     /**
      * How far the frame inhales on the boost, metres of extra arm, 0 off.
      *
