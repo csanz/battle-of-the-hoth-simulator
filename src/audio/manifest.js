@@ -154,8 +154,21 @@ export const AUDIO_MANIFEST = {
     //
     // No `exclusive`: two machines firing a second apart are two events, and a
     // near shot cutting a far one short is exactly what would give the distance
-    // away as fake. The floor is short because the guns are paired and the second
-    // barrel follows the first by a tenth of a second.
+    // away as fake.
+    //
+    // The floor is very short, and it has to be, because `minGap` is keyed on the
+    // *sample* and not on the machine: a herd of six shares one counter, so any
+    // floor is also a rule about how close together two different walkers may
+    // fire. At 0.05 a sixth of the herd's shots were being dropped outright at
+    // the top of the count slider — and dropped blind to distance, so a far
+    // machine's crack could eat the near one that followed it 40 ms later, which
+    // is the loudest sound in the demo going missing. The paired barrels are
+    // 0.11 s apart (`FIRE_STAGGER`), so anything under that is safe for a burst;
+    // what stopped it going lower before was two copies of one sample landing in
+    // the same frame and comb-filtering. The soundscape now detunes every shot
+    // onto alternating sides of unity, so the two copies are no longer the same
+    // sample and cannot phase against each other — which leaves this purely as a
+    // runaway guard, and a runaway guard wants to be as small as it can be.
     //
     // Hot on its own — the file measures -11 LUFS against the spells' -20s — so
     // the trim here is doing real work rather than expressing a preference.
@@ -169,17 +182,20 @@ export const AUDIO_MANIFEST = {
         url: "audio/at-walker-canon.mp3",
         bus: "sfx",
         gain: 0.36,
-        minGap: 0.05,
+        minGap: 0.02,
     },
 
     // The AT-ST's chin gun — the escort's own voice, snappier and lighter than
     // the walker cannon above. Same no-`exclusive` reasoning: two scouts firing
-    // are two events, and the soundscape scales the level with distance.
+    // are two events, and the soundscape scales the level with distance. Same
+    // floor as the cannon, and for the same reason written out up there — more
+    // urgently here, in fact, since there are five scouts by default against
+    // three walkers and the shared counter is that much busier.
     atstShot: {
         url: "audio/at-st-cannon.mp3",
         bus: "sfx",
         gain: 0.32,
-        minGap: 0.05,
+        minGap: 0.02,
     },
 
     // The speeder's cannons, alternating. Two samples rather than one detuned,
@@ -194,21 +210,71 @@ export const AUDIO_MANIFEST = {
         needs: "speeder",
     },
 
-    // The repulsorlift. One loop, held for as long as the craft exists, with its
-    // rate and its level ridden by speed — idling low and slow, opening up under
-    // power. Natively looped rather than overlapped for exactly the reason the
-    // board is: an overlap schedule is laid out in real seconds and cannot follow
-    // a playback rate that changes every frame.
-    // A wingman going in. Fired from main's crash handler at the level and
-    // delay its distance earns, same physics as the cannon.
+    // A craft hitting something — the collision pass's own hits and crashes,
+    // player included, and any speeder going into the snow. Fired at the level
+    // and delay its distance earns, same physics as the cannon. Gated on the
+    // speeder rather than the wingmen now that the player's craft can crash.
+    //
+    // No longer the AI wingman's death, though — that is `speederCrash2` below,
+    // whose recording contains the whole fall rather than one impact.
     speederCrash: {
         url: "audio/speeder-explosion.mp3",
         bus: "sfx",
         gain: 0.9,
         minGap: 0.5,
+        needs: "speeder",
+    },
+
+    // The wingman going in: seven and a half seconds of one continuous event.
+    //
+    // This sample is not an impact, it is a *sequence* — the craft is hit, it
+    // falls, it strikes the snow at t≈4.0 s, skips, and the final crash lands at
+    // t≈5.5 s with debris settling after. That makes it the clock rather than a
+    // reaction to one: the flight is timed to the recording, not the other way
+    // round, so it is fired once at the killing hit and nothing else about the
+    // fall makes a sound. A second crash layered on the ground contact would be
+    // the sample's own crash doubled a frame out of step with itself, which is
+    // the one thing that would give the whole choreography away.
+    //
+    // Hence the six-second floor. It is not a machine-gun guard like the carve
+    // sounds' — it is longer than the part of the clip that carries the event,
+    // so two wingmen dying a moment apart cannot smear their impacts across each
+    // other into mush. The cost is that the second death is silent, and a silent
+    // second death is better than two crashes landing on top of one another.
+    //
+    // `needs: "showWingman"` because this is the AI's crash specifically; with
+    // the wingmen switched off nothing can ever fire it, so it should not even
+    // be fetched.
+    speederCrash2: {
+        url: "audio/speeder-crash-2.mp3",
+        bus: "sfx",
+        gain: 0.95,
+        minGap: 6,
         needs: "showWingman",
     },
 
+    // A speeder striking a walker's hull — a metal-on-metal impact, a second
+    // long, distinct from the explosion above because hitting an AT-AT's leg at
+    // speed is not the same event as a craft detonating in the snow.
+    //
+    // Short floor: a glancing pass can clip the same machine two or three times
+    // over as it goes by, and those genuinely are separate hits — a quarter of a
+    // second only stops one contact resolving over consecutive frames into a
+    // burst. Gated on the speeder rather than the walkers because the player is
+    // the one who causes it.
+    speederHitWalker: {
+        url: "audio/speeder-hit-walker.mp3",
+        bus: "sfx",
+        gain: 0.85,
+        minGap: 0.25,
+        needs: "speeder",
+    },
+
+    // The repulsorlift. One loop, held for as long as the craft exists, with its
+    // rate and its level ridden by speed — idling low and slow, opening up under
+    // power. Natively looped rather than overlapped for exactly the reason the
+    // board is: an overlap schedule is laid out in real seconds and cannot follow
+    // a playback rate that changes every frame.
     speederJet: {
         url: "audio/delta-jet.mp3",
         needs: "speeder",

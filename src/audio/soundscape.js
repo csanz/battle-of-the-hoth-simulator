@@ -124,6 +124,40 @@ const SHOT_AUDIBLE = 420;
  */
 const SPEED_OF_SOUND = 343;
 
+/**
+ * How far a cannon shot may be detuned from unity, as a fraction of rate.
+ *
+ * A machine fires one recording over and over, and one recording played back
+ * identically every time is the single fastest way to make a weapon sound like a
+ * sound *file* rather than a gun. Real ordnance is never twice the same: the
+ * charge, the barrel temperature, the air between it and you all move the crack
+ * around. Eight percent is a little over a semitone either way — enough that two
+ * rounds are audibly different rounds, and well short of the point where the
+ * pitch shift reads as the machine being a different size.
+ *
+ * The detune also does structural work now that the manifest's floor is down at
+ * 0.02: two machines firing inside the same frame play two copies of one buffer,
+ * and identical copies a few milliseconds apart comb-filter into a flange. At
+ * different rates they are simply two guns.
+ */
+const SHOT_DETUNE = 0.08;
+/**
+ * The smallest fraction of `SHOT_DETUNE` a shot may draw, so no round comes out
+ * at effectively unity. Combined with the side-alternation below, consecutive
+ * shots are always at least `2 * 0.35 * SHOT_DETUNE` apart in rate — about a
+ * semitone — rather than merely *usually* different.
+ */
+const SHOT_DETUNE_FLOOR = 0.35;
+/**
+ * Level jitter per shot, as a fraction either side of what distance earns.
+ *
+ * Small on purpose: the level is carrying the distance cue (see the cube below)
+ * and jitter deep enough to be heard as loudness would be heard as the machine
+ * moving. This is the last few percent that stops a steady burst from a stationary
+ * walker arriving at a metronomic, identical level.
+ */
+const SHOT_GAIN_JITTER = 0.12;
+
 const EXCITED_KEYS = [
     "excited1", "excited2", "excited3", "excited4", "excited5", "excited6",
 ];
@@ -149,6 +183,16 @@ export class Soundscape {
         this._shots = [];
         this._atstSteps = [];
         this._atstShots = [];
+        /**
+         * Which side of unity the last cannon shot was detuned to, ±1.
+         *
+         * Shared across both herds deliberately: what matters is that two shots
+         * *heard* one after the other differ, and the ear does not care which
+         * machine made them. Flipping rather than drawing freely is the same
+         * trick the carve samples use — a free draw lands on near-identical
+         * values often enough to sound like the variation is broken.
+         */
+        this._shotFlip = 1;
 
         /** @type {import("./engine.js").LoopVoice|null} */
         this.ambience = null;
@@ -393,12 +437,19 @@ export class Soundscape {
      * reason: the walkers do not know sound exists.
      *
      * Two numbers do all the work. The level rolls off over the whole audible
-     * range as a squared falloff, which is what "it comes up as it gets closer"
-     * actually is; and the playback is *delayed* by the distance over the speed
-     * of sound, so the thud of a foot two hundred metres away arrives six tenths
-     * of a second after you watch it land. That second one is nearly free — the
-     * engine's `play` already takes a delay — and it is the cue that sells the
-     * scale of the thing better than the level ever does.
+     * range as a power falloff, which is what "it comes up as it gets closer"
+     * actually is — squared for a footfall, and *cubed* for a gun, for the
+     * reason written out at the shot itself; and the playback is *delayed* by
+     * the distance over the speed of sound, so the thud of a foot two hundred
+     * metres away arrives six tenths of a second after you watch it land. That
+     * second one is nearly free — the engine's `play` already takes a delay —
+     * and it is the cue that sells the scale of the thing better than the level
+     * ever does.
+     *
+     * This pair — `near³` out to a hard audible radius, plus `d / 343` of
+     * delay — is the model every positioned sound in the demo follows, and the
+     * gun below is where it is written down. Anything new that happens out in
+     * the world and wants to sound like it is out in the world copies it.
      *
      * Generalised over the herd: the AT-ATs and the AT-ST escort run the same
      * counters with their own memory arrays, and the multipliers are what make
@@ -458,17 +509,37 @@ export class Soundscape {
             // No `gainMul`/`rateMul` here: those exist to make the *shared*
             // step sample read as a smaller machine, and each herd's cannon is
             // its own recording with its own manifest level. Distance is the
-            // only thing that scales a shot — all the way to zero, and
+            // only thing that *scales* a shot — all the way to zero, and
             // *cubed*. Squared was not enough: a machine only fires once the
             // player is inside its ~340 m gun range, so every shot the player
             // ever hears lives in the top of the curve, and a shallow top is
             // exactly "loud at every distance". The cube keeps a near shot a
             // crack and makes two hundred metres genuinely far.
-            this.audio.play(shotKey, {
-                gain: near * near * near,
-                rate: 0.94 + Math.random() * 0.1,
+            //
+            // On top of that, and only on top of it, a per-shot voice: the
+            // distance model decides the level and the pitch centre, and the
+            // jitter moves each round a little off it so no two are the same
+            // recording twice. Alternating sides of unity rather than a free
+            // draw — see `_shotFlip` — so *consecutive* rounds always differ
+            // rather than usually differing, which is the case the ear
+            // notices: the paired barrels fire a tenth of a second apart, and
+            // that pair is the thing that used to sound like one file played
+            // twice.
+            //
+            // The side only advances on a shot that actually started: `play`
+            // returns null when the manifest floor swallows one, and a
+            // swallowed round burning a flip would leave the two rounds either
+            // side of it on the same side — the alternation has to be over what
+            // was *heard*, which is the only sequence there is.
+            const flip = -this._shotFlip;
+            const spread = SHOT_DETUNE_FLOOR + (1 - SHOT_DETUNE_FLOOR) * Math.random();
+            const played = this.audio.play(shotKey, {
+                gain: near * near * near
+                    * (1 + (Math.random() * 2 - 1) * SHOT_GAIN_JITTER),
+                rate: 1 + flip * SHOT_DETUNE * spread,
                 delay: Math.min(1.6, d / SPEED_OF_SOUND),
             });
+            if (played) this._shotFlip = flip;
         }
         // Adopt the counts of any walker that appeared since the last frame, so
         // a herd grown by the slider does not fire a burst of backdated steps.

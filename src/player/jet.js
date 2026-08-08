@@ -91,6 +91,10 @@ export class Jet {
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
+// Placed entirely by the vertex shader, so the CPU-side bounds are a
+        // fiction — pin them rather than letting three derive nonsense (or a
+        // NaN radius) from the lattice indices.
+        geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
         const mesh = new THREE.Mesh(geometry, this.material);
         mesh.metadata = { triangles: NOZZLES * RUNGS * 2, vertices: v };
         return mesh;

@@ -31,6 +31,7 @@ import { WalkerHerd } from "./walkers/walker.js";
 import { loadWalkerAsset } from "./walkers/walkerAsset.js";
 import { Speeder } from "./player/speeder.js";
 import { Wingman, emitBurnTrail } from "./player/wingman.js";
+import { CollisionPass } from "./physics/collisionPass.js";
 import { Overlay } from "./ui/overlay.js";
 import { createFpsMeter } from "./ui/fpsMeter.js";
 import { Sky } from "./render/sky.js";
@@ -53,6 +54,18 @@ const _vel = new THREE.Vector3();
 
 /** Beauty clear — linear (§2.6). */
 const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
+
+/**
+ * Metres at which a craft coming apart stops being audible.
+ *
+ * Deliberately more than double the cannons' 420 m (`SHOT_AUDIBLE` in the
+ * soundscape): a chin cannon is one gun among many and stops mattering across
+ * the line, while a snowspeeder exploding is the loudest event in the battle
+ * and the one the player most wants to hear happen. The falloff is the same
+ * cubed curve either way, so a crash at 700 m is a faint distant thump — which
+ * is the point — rather than nothing at all.
+ */
+const CRASH_AUDIBLE = 900;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
@@ -546,6 +559,12 @@ async function boot() {
     const enemyFire = [walkers.bolts, walkers2.bolts, atsts.bolts, troopers.bolts];
     // The shared fate token: one ship wounded and falling at a time, ever.
     const raid = { turn: 0, size: Math.max(1, wingmen.length) };
+    /** Milliseconds inside which a second announcement of the same skip is
+     *  the same skip. The two ground contacts of one fall are ~1.5 s apart
+     *  and the crash does not route through `onBounce` at all, so anything
+     *  under that is safe; a full second is comfortably clear of the
+     *  duplicate-in-the-same-frame case it exists for. */
+    const BOUNCE_DEBOUNCE = 1000;
     for (const w of wingmen) {
         w.effects = {
             smoke,
@@ -555,29 +574,122 @@ async function boot() {
             // the fireball the dying machine then flies out of. The volume's
             // centre normally sits LIFT above a ground impact, so the y is
             // walked down to land the burst at hull height.
+            //
+            // This is also where the *whole fall* starts speaking. Since the
+            // crash choreography was re-timed onto `speeder-crash-2.mp3`, that
+            // sample is no longer a report — it is the soundtrack of the next
+            // seven and a half seconds: the hit, the long windmilling descent,
+            // the first ground impact at 4.0 s, the final crash at 5.5 s and
+            // the debris settling after. So it is fired exactly ONCE, here at
+            // t = 0, and nothing downstream is allowed to speak again — not
+            // the skip, not `onCrash`. Playing it at t=0 is what puts its
+            // internal 4.0 s and 5.5 s marks on the frames where the craft
+            // actually touches the snow; delaying it or restarting it at the
+            // ground would smear the whole sequence out of sync.
             onKillHit: (x, y, z) => {
                 explosions.impact(x, y - 2.4, z, true, true);
+                // The cannon distance model, to the letter: linear to nothing
+                // at 420 m, CUBED so it does not read as loud from across the
+                // battle line, and 343 m/s of honest travel time on top.
                 const kd = Math.hypot(
                     x - character.position.x, z - character.position.z
                 );
-                const kn = Math.max(0, 1 - kd / 420);
-                audio.play("speederCrash", {
-                    gain: kn * kn * kn * 0.55,
-                    delay: Math.min(1.6, kd / 343),
-                });
+                // …but over a longer reach than a chin cannon. 420 m is the
+                // range at which one gun firing stops mattering; a snowspeeder
+                // coming apart is the loudest thing on this battlefield, and
+                // it is *falling for five and a half seconds* — a fall that
+                // usually carries it a couple of hundred metres closer to the
+                // player before it lands. Cut at 420 and the deaths that read
+                // as most cinematic, the ones out over the line, happen in
+                // total silence. The cube keeps a distant one honestly faint.
+                const kn = Math.max(0, 1 - kd / CRASH_AUDIBLE);
+                if (kn > 0) {
+                    audio.play("speederCrash2", {
+                        gain: kn * kn * kn,
+                        delay: Math.min(1.6, kd / 343),
+                    });
+                }
+            },
+            /**
+             * The skip — first ground contact at t ≈ 4.0 s, the craft striking
+             * the snow and bouncing back off it rather than ending there.
+             *
+             * Everything the crash does, one size down and one register
+             * quieter: the same plume-and-ring splash shape, a short shallow
+             * gouge along the skid line, a small dirty puff. Deliberately NO
+             * explosion — the airframe is still whole, it is only touching —
+             * and deliberately NO sound: `speeder-crash-2.mp3` has this exact
+             * impact baked into it at 4.0 s and has been playing since the
+             * killing hit, so anything fired here would double it.
+             *
+             * See `pumpBounces` for how this is reached: it is called both
+             * ways, as a callback and off a one-frame latch. The debounce
+             * lives here rather than at either call site precisely because
+             * there are two of them — a pilot that announces the skip both
+             * ways still only skips once, and a fall skips once by nature
+             * (the next contact is the crash, and a respawn separates falls).
+             */
+            onBounce: (x, y, z, facing) => {
+                const nowMs = performance.now();
+                if (nowMs - (w._bounceT ?? -1e9) < BOUNCE_DEBOUNCE) return;
+                w._bounceT = nowMs;
+                const gy = terrain.heightAt(x, z);
+                const fx2 = Math.sin(facing ?? 0), fz2 = Math.cos(facing ?? 0);
+                // The scuff: shallow, long, laid along the direction of travel.
+                terrain.deform.brush(
+                    x, z, 2.2, 0.3, 0.22, 0.75, 0.2, facing ?? 0, 3.4, 0.9
+                );
+                // The splash, at a third of the crash's count and half its
+                // throw — a skip lifts a sheet of powder, not a column.
+                for (let k = 0; k < 20; k++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const out = 3 + Math.random() * 6;
+                    spray.emit(
+                        x + Math.cos(a) * 0.4, gy + 0.2, z + Math.sin(a) * 0.4,
+                        Math.cos(a) * out + fx2 * 4,
+                        3 + Math.random() * 6,
+                        Math.sin(a) * out + fz2 * 4,
+                        0.05 + Math.random() * 0.07, 0.5 + Math.random() * 0.7,
+                        Math.random() < 0.4 ? 1 : 0, 1.2
+                    );
+                }
+                // The low ring racing out from the touch point.
+                for (let k = 0; k < 12; k++) {
+                    const a = (k / 12) * Math.PI * 2 + Math.random() * 0.3;
+                    const out = 6 + Math.random() * 5;
+                    spray.emit(
+                        x + Math.cos(a) * 1.0, gy + 0.15, z + Math.sin(a) * 1.0,
+                        Math.cos(a) * out, 1.0 + Math.random() * 1.6,
+                        Math.sin(a) * out,
+                        0.04 + Math.random() * 0.05, 0.45 + Math.random() * 0.4,
+                        1, 1.5
+                    );
+                }
+                // A puff, not a ball: grey, small, gone in a few seconds.
+                for (let k = 0; k < 5; k++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const rr = Math.random() * 0.9;
+                    smoke.emit(
+                        x + Math.cos(a) * rr, gy + 0.8 + Math.random() * 1.0,
+                        z + Math.sin(a) * rr,
+                        (Math.random() - 0.5) * 1.6 + fx2 * 2,
+                        0.6 + Math.random() * 1.0,
+                        (Math.random() - 0.5) * 1.6 + fz2 * 2,
+                        0.9 + Math.random() * 0.7, -0.1,
+                        2.4 + Math.random() * 2.0,
+                        0.09, 0.09, 0.09, 0.5, true
+                    );
+                }
             },
             onCrash: (x, y, z, facing) => {
                 explosions.impact(x, y, z, true, true);
-                // The report, at the level and the delay its distance earns —
-                // the same physics the cannons obey.
-                const cd = Math.hypot(
-                    x - character.position.x, z - character.position.z
-                );
-                const cn = Math.max(0, 1 - cd / 420);
-                audio.play("speederCrash", {
-                    gain: cn * cn * cn,
-                    delay: Math.min(1.6, cd / 343),
-                });
+                // No report here on purpose. `speederCrash2` started at the
+                // killing hit and its own timeline reaches the final crash at
+                // 5.5 s, which is this frame — a second sample fired now would
+                // land on top of the one already playing and smear the very
+                // moment it is meant to punctuate. The fireball, the crater
+                // and the snow are the whole of what this handler contributes.
+                //
                 // The arrival scar: the crater it dug and the trench it
                 // ploughed getting there.
                 terrain.deform.brush(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
@@ -659,7 +771,68 @@ async function boot() {
                 }
             },
         };
+        // The pilot's own back-channel to the same handlers. SimPilot is a
+        // bare character controller — it has never held an effects object,
+        // the Wingman wrapper does — but the skip happens deep inside the
+        // downed ballistic, where only the pilot knows the frame the snow was
+        // touched. Handing it the same bag lets it call `this._fx?.onBounce?.()`
+        // directly if it wants to; if it would rather raise a one-frame latch
+        // instead, `pumpBounces` below picks that up. Both roads lead here,
+        // and the debounce makes taking both harmless.
+        w.pilot._fx = w.effects;
     }
+
+    /**
+     * The skip, delivered whichever way the flight code chose to announce it.
+     *
+     * Two contracts are honoured because the fall is authored on the other
+     * side of the wall and either shape is reasonable there:
+     *
+     *   the callback   the pilot (or the wrapper) calls `onBounce(x,y,z,facing)`
+     *                  at the contact frame, through `_fx` or `effects`.
+     *   the latch      the pilot raises `bounced = true` for one frame — the
+     *                  same shape as the existing `crashed` latch — and this
+     *                  clears it. `Wingman.bounced` is accepted too, in case
+     *                  the wrapper forwards it rather than the pilot raising it.
+     *
+     * A pilot that does both fires once — see the debounce inside `onBounce`.
+     */
+    const pumpBounces = () => {
+        for (const w of wingmen) {
+            const P = w.pilot;
+            if (!P) continue;
+            if (!P.bounced && !w.bounced) continue;
+            P.bounced = false;
+            w.bounced = false;
+            w.effects?.onBounce?.(P.position.x, P.position.y, P.position.z, P.facing);
+        }
+    };
+
+    // ------------------------------------------------------------ collisions
+    // The craft meet the machines: swept spheres against the walkers' capsule
+    // sets, the wrecks and each other, with the consequences routed to their
+    // owners — deflection and scramble to the craft, a stumble to the walker,
+    // snow, smoke, fire and the report to the field. Gated live by
+    // S.collisions; every collaborator is optional, so a boot without a
+    // speeder or without wingmen runs the parts it has.
+    const collision = new CollisionPass({
+        character, speeder, wingmen,
+        herds: [
+            { herd: walkers, kind: "atat" },
+            { herd: walkers2, kind: "atat" },
+            { herd: atsts, kind: "atst" },
+        ],
+        wrecks, terrain, explosions, spray, smoke, rig, audio, troopers,
+        squadImpact: (x, z) => squadImpact(x, 0, z),
+    });
+
+    // The escorts are told what is solid. Their constructor only ever saw the
+    // front AT-AT line, so without this they dodge the first wave and fly
+    // straight through the second and through every AT-ST — the very machines
+    // the collision pass above will happily bounce them off. The troopers are
+    // deliberately not in the list: they are man-sized and they are what the
+    // low runs exist to strafe.
+    for (const w of wingmen) w.setAvoidHerds?.([walkers, walkers2, atsts]);
 
     // A low pass is its own kind of near miss: the craft screaming over at
     // deck height sends the squad diving without a shot fired — same dives,
@@ -1275,6 +1448,14 @@ async function boot() {
             w.tick(dt);
             w.update(dt);
         }
+        // The skip, if one of the falling craft touched the snow this frame
+        // and said so with a latch rather than a call. Cheap — a flag test
+        // per wingman — and it has to run after the pilots have moved, so
+        // the contact point it reads is this frame's, not last frame's.
+        pumpBounces();
+        // After every craft has moved, before the rig frames the result: the
+        // contacts this frame's motion earned, resolved and reacted to.
+        collision.update(dt);
         const tChar = performance.now();
 
         _vel.copy(character.velocity);
@@ -1444,7 +1625,7 @@ async function boot() {
     setTimeout(() => overlay.resetSpikes(), 800);
 
     globalThis.SNOWFLOW = {
-        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, pilots, wrecks, speeder, wingman, wingmen, contact, spray, wake, spells, destroyers, explosions,
+        gfx, scene: gfx.scene, rig, character, figure, walkers, walkers2, atsts, troopers, pilots, wrecks, speeder, wingman, wingmen, collision, contact, spray, wake, spells, destroyers, explosions,
         overlay, touchControls, terrain, sky, shadows, post, depthPass,
         audio, soundscape,
         S, input, perfStats: stats,

@@ -128,6 +128,38 @@ const LEASH = 900;
 const SEPARATION = 30;
 
 /**
+ * The collision capsules, metres at scale 1 — see `collectColliders`.
+ *
+ * Sized against the measured hull (10.1 wide, 22.48 tall, 28.1 long at
+ * scale 1), with one shape deliberately preserved: the body capsule's floor
+ * sits at ~12.5 m while the belly of the modelled hull does too, so flying
+ * UNDER the body and BETWEEN the legs stays possible. That is the film shot.
+ */
+const COL_BELLY_TOP = 13.2;   // legs run from each sole up to here
+const COL_LEG_R = 0.75;       // strut-thick: the between-legs run must stay flyable
+const COL_BODY_Y = 17.5;      // hull axis height; its floor clears the corridor
+const COL_BODY_Z0 = -8.5;
+const COL_BODY_Z1 = 6.5;
+const COL_BODY_R = 5.0;
+const COL_HEAD_Y = 15;        // forward of the body, drooped on the neck
+const COL_HEAD_Z0 = 8;
+const COL_HEAD_Z1 = 12.5;
+const COL_HEAD_R = 2.6;
+/** The AT-ST is one standing pill: ground to cabin roof. */
+const COL_ATST_TOP = 8.6;
+const COL_ATST_R = 2.0;
+
+/**
+ * The stumble — what a speeder glancing off a leg does to a machine that
+ * outweighs it a thousandfold. Not a shove: a lost beat. The effective rate
+ * dips by up to `STUMBLE_DIP` and swells back over `STUMBLE_TIME` seconds,
+ * with a yaw nudge of at most `STUMBLE_YAW` radians on the moment of the hit.
+ */
+const STUMBLE_TIME = 1.2;
+const STUMBLE_DIP = 0.35;
+const STUMBLE_YAW = 0.02;
+
+/**
  * LOD thresholds, in projected pixels of hull height. Inert while the bake
  * ships a single level — the selector clamps to the coarsest level that
  * actually exists — and live the moment it ships more.
@@ -289,8 +321,13 @@ function shaderOr(name, fallback) {
  * four largest movers is the footfall, and its frame index over the frame
  * count is the phase.
  *
+ * Alongside the phases, the detected feet keep their bone indices — the
+ * collision capsules stand on those, reading each sole's world position back
+ * out of the pose texture. Four for the AT-AT, two for the AT-ST; whatever a
+ * biped bake reports goes unused.
+ *
  * @param {Int16Array} anim @param {any} header
- * @returns {number[]} phases, ascending
+ * @returns {{phases: number[], bones: number[]}} both ascending by phase
  */
 function deriveFootfalls(anim, header) {
     const bones = header.boneCount;
@@ -307,7 +344,7 @@ function deriveFootfalls(anim, header) {
             if (y < lo) { lo = y; at = f; }
             if (y > hi) hi = y;
         }
-        stat.push({ lo, range: hi - lo, at });
+        stat.push({ lo, range: hi - lo, at, bone: b });
         if (lo < lowest) lowest = lo;
     }
 
@@ -321,18 +358,120 @@ function deriveFootfalls(anim, header) {
         .filter((s) => s.range > lift)
         .sort((a, b) => a.lo - b.lo);
 
-    const phases = [];
+    const falls = [];
     for (const f of feet) {
         const p = f.at / frames;
         // Wrap-aware: 0.98 and 0.01 are the same moment in a looping cycle.
         const near = (q) => {
-            const d = Math.abs(q - p);
+            const d = Math.abs(q.p - p);
             return Math.min(d, 1 - d) < 0.07;
         };
-        if (!phases.some(near)) phases.push(p);
-        if (phases.length >= MAX_FOOTFALLS) break;
+        if (!falls.some(near)) falls.push({ p, bone: f.bone });
+        if (falls.length >= MAX_FOOTFALLS) break;
     }
-    return phases.sort((a, b) => a - b);
+    falls.sort((a, b) => a.p - b.p);
+    return {
+        phases: falls.map((f) => f.p),
+        bones: falls.map((f) => f.bone),
+        // Every bone that moves like a foot, deepest first — the capsule
+        // picker re-selects from these with a separation test, because two
+        // bones of the *same* leg (ankle, toe) land a tenth of a cycle apart
+        // and both survive the phase dedupe above.
+        candidates: feet,
+    };
+}
+
+/**
+ * Where each detected foot actually is, in bind space.
+ *
+ * The gait detector names foot *bones*; this names foot *places*: the centroid
+ * of the vertices each foot bone dominates, in the mesh's own bind pose. That
+ * point pushed through the bone's live `_texData` matrix is the sole's world
+ * position each frame — stride, stance tilt and world transform in one
+ * multiply.
+ *
+ * Selection is by *place*, not by phase: an ankle and a toe of the same leg
+ * both move like feet and land a tenth of a cycle apart, so the phase list
+ * happily seats two bones on one leg and none on another. Here the deepest
+ * candidates are taken greedily with a bind-space separation floor — one
+ * capsule per actual leg, up to `MAX_FOOTFALLS` of them. A bone that
+ * dominates almost no vertices (a helper joint) never qualifies: better
+ * three honest legs than four guessed.
+ *
+ * @param {import("./walkerAsset.js").WalkerAsset} asset
+ * @param {any} header
+ * @param {{lo: number, bone: number}[]} candidates foot-like bones from
+ *   `deriveFootfalls`, deepest first
+ * @returns {{bones: number[], anchors: Float32Array}} anchors xyz per kept bone
+ */
+function deriveFootAnchors(asset, header, candidates) {
+    const lod = asset.lods[0];
+    const pos = lod.positions;
+    const idx = lod.boneIdx;
+    const wt = lod.boneWt;
+    const n = lod.vertexCount;
+
+    const want = new Int32Array(header.boneCount).fill(-1);
+    for (let f = 0; f < candidates.length; f++) want[candidates[f].bone] = f;
+
+    const sum = new Float64Array(candidates.length * 3);
+    const count = new Float64Array(candidates.length);
+    for (let v = 0; v < n; v++) {
+        let best = 0, bw = -1;
+        for (let k = 0; k < 4; k++) {
+            const w = wt[v * 4 + k];
+            if (w > bw) { bw = w; best = idx[v * 4 + k]; }
+        }
+        const f = want[best];
+        if (f < 0) continue;
+        sum[f * 3] += pos[v * 3];
+        sum[f * 3 + 1] += pos[v * 3 + 1];
+        sum[f * 3 + 2] += pos[v * 3 + 2];
+        count[f]++;
+    }
+
+    // A candidate is only a sole if its *geometry* stands at the ground. The
+    // gait detector ranks by the translation column's dip, which a thigh can
+    // win — so place each candidate's centroid in the standing frame through
+    // its frame-0 matrix (the `deriveHead` move) and keep the ones that live
+    // in the bottom of the machine, one per leg by a separation floor that
+    // scales with it: ~3 m for the AT-AT's leg spacing, ~1.2 m for the
+    // AT-ST's two ankles.
+    const anim = asset.anim;
+    const bs = header.basisScale, ts = header.transScale;
+    const soleMax = header.height * 0.12;
+    const sepMin = Math.min(3, header.height * 0.14);
+    const bones = [];
+    const kept = [];
+    const standXZ = [];
+    for (const cand of candidates) {
+        if (bones.length >= MAX_FOOTFALLS) break;
+        const f = want[cand.bone];
+        if (count[f] < 8) continue;
+        const cx = sum[f * 3] / count[f];
+        const cy = sum[f * 3 + 1] / count[f];
+        const cz = sum[f * 3 + 2] / count[f];
+        const o = cand.bone * 12;
+        const sx = (anim[o] * cx + anim[o + 3] * cy + anim[o + 6] * cz) * bs
+            + anim[o + 9] * ts;
+        const sy = (anim[o + 1] * cx + anim[o + 4] * cy + anim[o + 7] * cz) * bs
+            + anim[o + 10] * ts;
+        const sz = (anim[o + 2] * cx + anim[o + 5] * cy + anim[o + 8] * cz) * bs
+            + anim[o + 11] * ts;
+        if (sy > soleMax) continue;
+        let taken = false;
+        for (let j = 0; j < standXZ.length; j += 2) {
+            if (Math.hypot(sx - standXZ[j], sz - standXZ[j + 1]) < sepMin) {
+                taken = true;
+                break;
+            }
+        }
+        if (taken) continue;
+        bones.push(cand.bone);
+        kept.push(cx, cy, cz);
+        standXZ.push(sx, sz);
+    }
+    return { bones, anchors: new Float32Array(kept) };
 }
 
 /**
@@ -519,6 +658,31 @@ function deriveHead(asset, header) {
 }
 
 /**
+ * One hull capsule into the collision pool: a segment on the walker's centre
+ * line — local (0, y, z0)..(0, y, z1) — through the world transform's basis
+ * columns, which already carry the scale. Plain field writes into a
+ * preallocated pool entry; nothing is created here.
+ *
+ * @param {object} c the pool entry
+ * @param {Float32Array} wm the walker's `_world` (three basis columns + origin)
+ * @param {number} y @param {number} z0 @param {number} z1 local metres, scale 1
+ * @param {number} r radius, world metres
+ * @param {string} kind @param {Walker} walker
+ */
+function writeHullCapsule(c, wm, y, z0, z1, r, kind, walker) {
+    c.ax = wm[3] * y + wm[6] * z0 + wm[9];
+    c.ay = wm[4] * y + wm[7] * z0 + wm[10];
+    c.az = wm[5] * y + wm[8] * z0 + wm[11];
+    c.bx = wm[3] * y + wm[6] * z1 + wm[9];
+    c.by = wm[4] * y + wm[7] * z1 + wm[10];
+    c.bz = wm[5] * y + wm[8] * z1 + wm[11];
+    c.r = r;
+    c.kind = kind;
+    c.walker = walker;
+    c.live = true;
+}
+
+/**
  * One machine. Owns its state, its mesh and its five materials; everything
  * expensive belongs to the herd and is handed in.
  */
@@ -572,6 +736,10 @@ class Walker {
          */
         this.rateBias = 1;
         this._rateWant = 1;
+
+        /** Stumble timer and strength — a hit's tempo hiccup. See `stumble`. */
+        this._stumbleT = 0;
+        this._stumbleS = 0;
 
         /**
          * A one-shot clip playing instead of the cycle — a hit reaction, a
@@ -789,7 +957,22 @@ class Walker {
         // The tempo trim multiplies the ground speed and the cycle rate together,
         // which is the only way it can be applied without the feet skating.
         this.rateBias = expDamp(this.rateBias, this._rateWant, 1.4, dt);
-        const r = rate * this.rateBias;
+        // The stumble rides the same multiplier as the separation trim, one
+        // more factor on the one number — so a hit machine loses the beat
+        // without its feet ever skating. In and out on a half-sine: the
+        // hiccup swells and recovers rather than stepping.
+        let hitch = 1;
+        if (this._stumbleT > 0) {
+            this._stumbleT -= dt;
+            if (this._stumbleT <= 0) {
+                this._stumbleT = 0;
+                this._stumbleS = 0;
+            } else {
+                const ease = Math.sin(Math.PI * (1 - this._stumbleT / STUMBLE_TIME));
+                hitch = 1 - STUMBLE_DIP * this._stumbleS * ease;
+            }
+        }
+        const r = rate * this.rateBias * hitch;
 
         const speed = this.herd.baseSpeed * scale * r;
         this.position.x += Math.sin(this.yaw) * speed * dt;
@@ -860,6 +1043,28 @@ class Walker {
             then: opts.then ?? null,
         };
         this._oneshotT = opts.startAt ?? 0;
+    }
+
+    /**
+     * Take a hit from something a thousandth of this machine's mass.
+     *
+     * NO position change, NO fall — nothing a snowspeeder carries moves an
+     * AT-AT. What a glancing impact costs it is the beat: for `STUMBLE_TIME`
+     * seconds the effective rate is dipped by up to `STUMBLE_DIP`·strength,
+     * eased in and out (see `step`), plus a one-off yaw nudge of at most
+     * `STUMBLE_YAW`·strength radians away from the hit. A second hit
+     * mid-stumble restarts the timer and keeps the harder of the two dips.
+     *
+     * @param {number} strength 0..1, from the impact's closing speed
+     * @param {number} [yawSign] which way the nudge turns: -1, 0 or 1
+     */
+    stumble(strength, yawSign = 0) {
+        // The dead and the diving are past stumbling.
+        if (this.oneshot) return;
+        const s = Math.min(1, Math.max(0, strength));
+        this._stumbleT = STUMBLE_TIME;
+        this._stumbleS = Math.max(this._stumbleS, s);
+        this.yaw += STUMBLE_YAW * s * Math.sign(yawSign);
     }
 
     /**
@@ -1260,8 +1465,22 @@ export class WalkerHerd {
         /** Extra baked clips by name (hit reactions, deaths), or null. */
         this.clips = asset.clips ?? null;
         this.boneScratch = new Float32Array(12);
+        const gait = deriveFootfalls(asset.anim, h);
         /** Cycle phases, 0..1, at which a foot is on the ground. */
-        this.footfalls = deriveFootfalls(asset.anim, h);
+        this.footfalls = gait.phases;
+        // The soles as bind-space anchors. A bone's matrix in `_texData` is
+        // world x inverse-bind, so its translation column is NOT the joint's
+        // position — the sole's place in the world is (matrix x bind point),
+        // the same one multiply the eye band rides. The bind point is the
+        // centroid of the vertices the bone drives, exactly as `deriveHead`
+        // locates the skull; a detected "foot" whose bone turns out to own
+        // almost no geometry is dropped rather than guessed at.
+        const soles = deriveFootAnchors(asset, h, gait.candidates);
+        /** Bone index per detected foot — the leg collision capsules stand on
+         *  these, one sole each. See `collectColliders`. */
+        this.footBones = soles.bones;
+        /** Bind-space sole positions, xyz per entry of `footBones`. */
+        this.footAnchors = soles.anchors;
 
         // Which bones the head chain drives, where the neck pivots, and where the
         // chin guns sit — all read off the geometry, so no re-bake.
@@ -1713,6 +1932,111 @@ export class WalkerHerd {
                 px(e.b), py(e.b), pz(e.b)
             );
         }
+    }
+
+    /**
+     * The collision pass's view of the herd: capsules, written into the pool
+     * it hands in, starting at `start`. Returns the next free pool index.
+     *
+     * Called AFTER `update`, deliberately — `_texData` still holds this
+     * frame's bone matrices, so the leg capsules read each sole's world
+     * position straight out of the translation row, exactly as `collectEyes`
+     * reads the face bone. The body and the head are hull volumes rather than
+     * bone volumes, so they ride `_world` instead. Every dimension is read
+     * live off the tune's scale — the sliders move them.
+     *
+     * The AT-AT's set — one leg per detected foot, a body, a head — keeps the
+     * under-belly corridor open: the body capsule's floor sits at ~12.5·scale,
+     * so flying under the hull and between the legs remains possible. The
+     * AT-ST is one standing pill. Troopers never come through here — the pass
+     * handles infantry as squash rings, not capsules.
+     *
+     * Only pool entries actually written are touched; the pass owns clearing
+     * the rest. No allocation.
+     *
+     * @param {object[]} pool preallocated capsule pool (see physics/colliders.js)
+     * @param {number} start first pool index this herd may write
+     * @param {string} kindTag 'atst' for the single pill, anything else for
+     *   the leg/body/head set
+     * @returns {number} the next free pool index
+     */
+    collectColliders(pool, start, kindTag) {
+        let k = start;
+        if (!this._visible) return k;
+        const scale = this.tune.scale();
+        const d = this._texData;
+        const bones = this.boneCount;
+        const feet = this.footBones;
+        const n = Math.min(this.count, this.walkers.length);
+
+        for (let i = 0; i < n && k < pool.length; i++) {
+            const w = this.walkers[i];
+            // The dead and the diving carry no capsules: a machine playing a
+            // one-shot is not standing where its cycle says it is, and a dead
+            // one is a wreck, which is the pass's own department.
+            if (w.oneshot) continue;
+
+            if (kindTag === "atst") {
+                const c = pool[k++];
+                c.ax = w.position.x;
+                c.ay = w.position.y;
+                c.az = w.position.z;
+                c.bx = w.position.x;
+                c.by = w.position.y + COL_ATST_TOP * scale;
+                c.bz = w.position.z;
+                c.r = COL_ATST_R * scale;
+                c.kind = "atst";
+                c.walker = w;
+                c.live = true;
+                continue;
+            }
+
+            // The legs: one vertical capsule per detected foot, standing on
+            // the sole wherever the gait has it this frame, up to the belly
+            // line. The sole is its bind-space anchor through the live bone
+            // matrix — the same multiply the eye band and the skin ride, so
+            // the capsule strides exactly with the drawn leg.
+            const row0 = w.index * 4;
+            const anchors = this.footAnchors;
+            for (let f = 0; f < feet.length && k < pool.length; f++) {
+                const b = feet[f];
+                const o0 = (row0 * bones + b) * 4;
+                const o1 = ((row0 + 1) * bones + b) * 4;
+                const o2 = ((row0 + 2) * bones + b) * 4;
+                const o3 = ((row0 + 3) * bones + b) * 4;
+                const fx = anchors[f * 3], fy = anchors[f * 3 + 1],
+                    fz = anchors[f * 3 + 2];
+                const c = pool[k++];
+                c.ax = d[o0] * fx + d[o1] * fy + d[o2] * fz + d[o3];
+                c.ay = d[o0 + 1] * fx + d[o1 + 1] * fy + d[o2 + 1] * fz
+                    + d[o3 + 1];
+                c.az = d[o0 + 2] * fx + d[o1 + 2] * fy + d[o2 + 2] * fz
+                    + d[o3 + 2];
+                c.bx = c.ax;
+                c.by = w.position.y + COL_BELLY_TOP * scale;
+                c.bz = c.az;
+                c.r = COL_LEG_R * scale;
+                c.kind = "leg";
+                c.walker = w;
+                c.live = true;
+            }
+
+            // The hull, axis along the walker's own fwd, and the head ahead
+            // and below it.
+            if (k < pool.length) {
+                writeHullCapsule(
+                    pool[k++], w._world, COL_BODY_Y, COL_BODY_Z0, COL_BODY_Z1,
+                    COL_BODY_R * scale, "body", w
+                );
+            }
+            if (k < pool.length) {
+                writeHullCapsule(
+                    pool[k++], w._world, COL_HEAD_Y, COL_HEAD_Z0, COL_HEAD_Z1,
+                    COL_HEAD_R * scale, "head", w
+                );
+            }
+        }
+        return k;
     }
 
     /**

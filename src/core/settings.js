@@ -312,8 +312,8 @@ export const S = {
     /** Paint the jet plume flat magenta so its true footprint is visible
      *  while the Jet sliders are being dialled. */
     jetDebug: false,
-    burnBackZ: 2.4,
-    burnY: 0.95,
+    burnBackZ: 2.6,
+    burnY: 0.25,
     /**
      * How far the frame inhales on the boost, metres of extra arm, 0 off.
      *
@@ -527,6 +527,22 @@ export const S = {
     musicVolume: 0.45,
     sfxVolume: 1.0,
 
+    // ------------------------------------------------------------- collision
+    /** The craft hit the machines. Off restores the fly-through field. */
+    collisions: true,
+    /**
+     * Severity thresholds, in m/s of *normal* closing speed — the component
+     * that actually shuts the gap, not the speedometer. Below `impactHit` a
+     * contact is a scrape (a deflection and some snow); above `impactCrash`
+     * it is a crash (the fireball, the ladder).
+     */
+    impactHit: 7,
+    impactCrash: 17,
+    /** Bounce: the fraction of the normal closure a contact returns. */
+    impactBounce: 0.35,
+    /** Multiplier on the yaw kick a glancing contact imparts. */
+    impactSpin: 1.0,
+
     // --------------------------------------------------------------- systems
     showTerrain: true,
     showCharacter: true,
@@ -714,6 +730,16 @@ export const SCHEMA = [
             { k: "atstScale", l: "AT-ST scale", t: "f", min: 0.4, max: 3, step: 0.05 },
             { k: "atstSpeed", l: "AT-ST gait", t: "f", min: 0, max: 5, step: 0.05 },
             { k: "atstSnow", l: "AT-ST snow", t: "f", min: 0, max: 1, step: 0.01 },
+        ],
+    },
+    {
+        group: "Collision",
+        items: [
+            { k: "collisions", l: "Collisions", t: "b" },
+            { k: "impactHit", l: "Hit at (m/s)", t: "f", min: 1, max: 30, step: 0.5 },
+            { k: "impactCrash", l: "Crash at (m/s)", t: "f", min: 5, max: 60, step: 0.5 },
+            { k: "impactBounce", l: "Bounce", t: "f", min: 0, max: 1, step: 0.01 },
+            { k: "impactSpin", l: "Spin kick", t: "f", min: 0, max: 3, step: 0.05 },
         ],
     },
     {
