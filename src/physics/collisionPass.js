@@ -61,12 +61,13 @@ const PLAYER_GRACE = 4;
 /**
  * Seconds lying in the snow before the run starts again.
  *
- * Long, on purpose. The camera spends them circling the wreck, and there is
+ * Long, on purpose. The camera spends them circling the wreck — at the crash
+ * cam's rate that is comfortably more than a full turn — and there is
  * something to look at: the hull sunk to its skids and burning, the pilot
- * thrown clear of the skid line, the crater. A crash the player is hurried
- * away from may as well not have happened.
+ * thrown clear of the skid line, the crater, and the machines walking on past
+ * it. A crash the player is hurried away from may as well not have happened.
  */
-const RECOVER = 5.4;
+const RECOVER = 9.0;
 /** Seconds between a craft's scrape effects — see `_contactFx`. */
 const SCRAPE_GAP = 0.22;
 /** Trooper squash: how close, how low, and how often per craft. */
@@ -803,7 +804,15 @@ export class CollisionPass {
             // went in looks the same whoever was flying it. The player's own
             // craft is about to be re-staged miles away, so what is left
             // here reads as the ship they just lost.
+            //
+            // And the player's own hull goes away as the wreck arrives. They
+            // occupy the same metre of snow for the length of the wait, and
+            // two snowspeeders lying in one crater is the giveaway that one
+            // of them is a prop. The wreck is the one that stays, because it
+            // is the one that keeps burning, frosting, and standing there
+            // after the run has started again.
             this.onWreck?.(x, z, facing);
+            this.speeder?.setVisible?.(false);
 
             // The scar: the hole it made and the furrow behind it.
             this.terrain?.deform?.brush?.(x, z, 3.4, 0.85, 0.6, 1.0, 0.6, 0, 1.3, 1.0);
@@ -852,7 +861,11 @@ export class CollisionPass {
                 this._pDamage = 0;
                 this._pBurnT = 0;
                 this._pGrace = PLAYER_GRACE;
+                // A fresh craft, and it is visible again — `onRestart` is
+                // what moves it, so this happens before the stage, never
+                // leaving a hull to blink at the crash site for a frame.
                 this.onRestart?.();
+                this.speeder?.setVisible?.(true);
             }
         }
     }

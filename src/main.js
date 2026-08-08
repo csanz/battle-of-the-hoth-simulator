@@ -15,7 +15,7 @@ import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "./core/perf.js";
 import { initInput, pollInput, endFrame, input } from "./core/input.js";
-import { CameraRig } from "./core/camera.js";
+import { CameraRig, expDamp } from "./core/camera.js";
 import { createGfx } from "./core/gfx.js";
 import { CharacterController } from "./character/controller.js";
 import { Character } from "./character/character.js";
@@ -67,11 +67,26 @@ const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
  */
 const CRASH_AUDIBLE = 900;
 
-/** Radians a second the camera walks around a crashed craft. Slow — a little
- *  under a quarter turn per second, so the seven seconds of the crash and the
- *  wait carry the shot most of the way round the wreck without ever reading
- *  as a spin. */
-const DEATH_CAM_RATE = 0.34;
+/**
+ * The crash camera.
+ *
+ * `RATE` is radians a second around the wreck — roughly forty degrees, so the
+ * fall and the wait together carry the shot well past a full circle. It was
+ * a third of this to begin with and the orbit was real but invisible: a
+ * hundred degrees spread over five seconds, from a camera already sitting
+ * behind the craft, reads as the camera simply drifting rather than as a shot
+ * moving around something. `DIST` stands the frame off far enough to hold the
+ * whole hull, the crater and the machines still walking past behind it, and
+ * `PITCH` looks down on it rather than at it.
+ */
+const DEATH_CAM_RATE = 0.72;
+const DEATH_CAM_DIST = 26;
+const DEATH_CAM_PITCH = 0.42;
+
+/** Metres back along the approach the craft is staged, at the opening and
+ *  after every crash. Far enough that flying back in is a journey with the
+ *  battle growing in the windscreen, rather than a hop. */
+const RESTAGE_BACK = 340;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
@@ -109,15 +124,6 @@ async function boot() {
         "https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-intro.mp4",
     ]);
     const filmReady = introFilm.preload();
-    // The second transmission: Luke again, called in the first time the player
-    // closes on the walker line. Staged far tighter than the opening — the
-    // player is flying and under fire, so the square cuts in almost at once
-    // rather than taking the entrance's long runway.
-    const crossFilm = createIntroFilm(
-        ["https://zpumgyyt6ujxyrej.public.blob.vercel-storage.com/video/luke-cross-fire.mp4"],
-        { hold: 0.15, tune: 0.5, label: "▸ INCOMING TRANSMISSION" }
-    );
-    const crossReady = crossFilm.preload();
     // Same reasoning for the walkers: 4.4 MB of geometry, three levels of detail
     // and one baked gait, none of which needs a device to arrive. It is awaited
     // well after the terrain.
@@ -916,17 +922,8 @@ async function boot() {
     const FLYBY_IN = 46;      // metres: close enough to be under it
     const FLYBY_OUT = 78;     // and this far back out before it can fire again
     const flybyArmed = new WeakMap();
-    /**
-     * How near the line the player must get before Luke calls again, metres.
-     * Wider than the flyby ring on purpose: the transmission is about having
-     * *arrived at the battle*, not about passing under one machine, and the
-     * square wants to be up before the shooting starts rather than during it.
-     */
-    const CROSSFIRE_AT = 165;
-    let crossFired = false;
     const walkerFlyby = () => {
-        if (!speeder || S.speeder !== true) return;
-        let nearest = Infinity;
+        if (!speeder || S.speeder !== true || !audio) return;
         for (const herd of [walkers, walkers2]) {
             if (!herd || !herd.walkers) continue;
             const n = Math.min(herd.count, herd.walkers.length);
@@ -938,8 +935,6 @@ async function boot() {
                     w.position.x - character.position.x,
                     w.position.z - character.position.z
                 );
-                if (d < nearest) nearest = d;
-                if (!audio) continue;
                 const fired = flybyArmed.get(w) === true;
                 if (!fired && d < FLYBY_IN * scale) {
                     flybyArmed.set(w, true);
@@ -952,18 +947,6 @@ async function boot() {
                     flybyArmed.set(w, false);
                 }
             }
-        }
-
-        // Luke's second call, once a session: the player has closed on the
-        // line. Held off until the opening hold has fully released and the
-        // first transmission is off the screen, so the two can never share
-        // the corner or talk over each other.
-        if (
-            !crossFired && crossFilm.ok && nearest < CROSSFIRE_AT
-            && introHold <= 0 && !introFilm.playing
-        ) {
-            crossFired = true;
-            crossFilm.play();
         }
     };
     speeder?.setVisible(true);
@@ -1096,8 +1079,8 @@ async function boot() {
                 toX: character.position.x, toZ: character.position.z,
                 heading: h,
             };
-            character.position.x -= Math.sin(h) * 150;
-            character.position.z -= Math.cos(h) * 150;
+            character.position.x -= Math.sin(h) * RESTAGE_BACK;
+            character.position.z -= Math.cos(h) * RESTAGE_BACK;
             character.facing = h;
         }
     };
@@ -1232,9 +1215,11 @@ async function boot() {
     let time = 0;
     /** Seconds of opening hold left — set by `startFlyover`, counted here. */
     let introHold = 0;
-    /** Seconds into the player's crash, driving the camera's slow circle of
-     *  the wreck. Zero whenever the craft is flying. */
+    /** Seconds into the player's crash, driving the camera's circle of the
+     *  wreck. Zero whenever the craft is flying. */
     let deathCamT = 0;
+    /** The framing the player had before the crash, handed back after it. */
+    let deathCamDist = 0;
     /**
      * The cockpit's line to the pilot. Silent unless the player pushes the
      * stick during the opening hold — then "stand by" says the lock is
@@ -1579,11 +1564,22 @@ async function boot() {
         let camFacing = speeder ? character.facing : null;
         let camLean = character.lean;
         if (character.crashing) {
+            if (deathCamT === 0) {
+                // Remember the framing to give back afterwards — the player
+                // may have zoomed it exactly where they like it.
+                deathCamDist = rig.distanceTarget;
+            }
             deathCamT += dt;
             camFacing = character.facing + deathCamT * DEATH_CAM_RATE;
             camLean = 0;
-        } else {
+            // Stand off and look down. Close behind is the flying camera's
+            // job; a crash wants the whole wreck in frame with the snow it
+            // ploughed, and the walkers still coming on behind it.
+            rig.distanceTarget = DEATH_CAM_DIST;
+            rig.pitch = expDamp(rig.pitch, DEATH_CAM_PITCH, 1.4, dt);
+        } else if (deathCamT > 0) {
             deathCamT = 0;
+            rig.distanceTarget = deathCamDist || rig.distanceTarget;
         }
         // Flying, the rig is handed the craft's heading and chases it itself —
         // see CameraRig.update — rather than the controller stepping rig.yaw.
@@ -1707,10 +1703,6 @@ async function boot() {
     await loading.phase("loading audio", 0.96);
     await audioReady;
     await filmReady;
-    // The second transmission is fetched behind the boot with everything else,
-    // so the moment it is called for it plays local bytes — a clip that
-    // buffered mid-battle would arrive after the moment that earned it.
-    await crossReady;
 
     // One click to enter, and that click is also the gesture that makes sound
     // legal. `unlock()` is issued from inside the handler — hence the callback —
