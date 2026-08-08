@@ -51,8 +51,6 @@ import { OPENING, applyOpening, installShotCapture } from "./core/openingShot.js
 
 // ------------------------------------------------------- module-scope scratch
 const _vel = new THREE.Vector3();
-/** Scratch for the escorts' staging point — see `startFlyover`. */
-const _stage = new THREE.Vector3();
 
 /** Beauty clear — linear (§2.6). */
 const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
@@ -89,23 +87,6 @@ const DEATH_CAM_PITCH = 0.42;
  *  after every crash. Far enough that flying back in is a journey with the
  *  battle growing in the windscreen, rather than a hop. */
 const RESTAGE_BACK = 340;
-/**
- * Metres up the approach the escort echelon is measured from.
- *
- * `flyover` stacks the flight 90, 125 and 160 m behind the point it is given,
- * so this number minus those is where the ships actually sit relative to the
- * player: at 150 that is +60, +25 and −10 — two off the nose, one off the
- * tail, the whole formation inside one glance and pulling away toward the
- * battle together. That is the opening as it read before the restage was
- * lengthened, and it is the arrangement to preserve; it happens to be the old
- * restage distance because that is precisely what used to set it, back when
- * the echelon was measured from the player's pre-restage position.
- *
- * Deliberately NOT tied to `RESTAGE_BACK` any more. That coupling was the
- * whole bug: stretching the run-in to 340 m dragged the flight 340 m out with
- * it, and three specks leaving on the horizon is not a flyover.
- */
-const FLYOVER_LEAD = 150;
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
 // injected script is served from the site's own origin (/_vercel/insights),
@@ -1101,30 +1082,19 @@ async function boot() {
             character.position.z -= Math.cos(h) * RESTAGE_BACK;
             character.facing = h;
         }
-        // …and the escorts after it, measured from a point a little way UP
-        // the player's own approach.
+        // …and the escorts after it, stacked behind wherever that put them —
+        // ninety, a hundred and twenty-five and a hundred and sixty metres
+        // back, which is what `flyover` does with the point it is handed.
         //
-        // Both halves of that matter. `flyover` stacks the flight in echelon
-        // ninety to a hundred and sixty metres behind whatever position it is
-        // handed, so handing it the player's start puts the whole flight off
-        // the back of a camera that only looks forward: they are not late,
-        // they are invisible, and the first the player sees of them is three
-        // specks already leaving at seven seconds. Handing it the player's
-        // *pre-restage* position — which is what happened before — puts them
-        // as far in front as the restage is long, which at 340 m is a flight
-        // that was never overhead at all.
-        //
-        // So: forward of the player by most of one echelon. The flight lands
-        // twenty to ninety metres back, and with roughly sixteen metres a
-        // second of closing speed it comes over the top across the whole
-        // opening hold, one ship at a time, which is the shot.
-        const eh = character.facing;
-        _stage.set(
-            character.position.x + Math.sin(eh) * FLYOVER_LEAD,
-            character.position.y,
-            character.position.z + Math.cos(eh) * FLYOVER_LEAD
-        );
-        for (const w of wingmen) w.flyover(_stage, bx, bz);
+        // This is the original arrangement, and the hold below is cut to fit
+        // it. What broke it was never the staging: it was the player's own
+        // run-in. The opening worked when the player sat still for it and the
+        // flight crossed a stationary cockpit; once the craft was given way of
+        // its own, the escorts were closing at two metres a second and never
+        // arrived. `FLYOVER_SPEED` is the fix, over in the pilot — the pass is
+        // flown fast enough to overtake a moving player, which is what makes a
+        // flyover a flyover.
+        for (const w of wingmen) w.flyover(character.position, bx, bz);
     };
 
     const post = new PostChain(gfx, rig, depthPass, sky);
@@ -1331,11 +1301,6 @@ async function boot() {
                         Math.sin(f) * 16, 0, Math.cos(f) * 16
                     );
                 }
-                // The escorts go at the same moment the player does. They
-                // have been holding station either side of the cockpit for
-                // the length of the transmission; the beat is all three
-                // opening up together and running for the line.
-                for (const w of wingmen) w.releaseFormation();
             }
             // The player's entrance: velocity fed straight into the
             // controller, which integrates, terrain-snaps and banks exactly
