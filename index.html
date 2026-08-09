@@ -162,8 +162,13 @@
     .controls {
         display: grid;
         grid-template-columns: auto auto;
-        gap: 10px 34px;
-        padding: 16px 22px;
+        /* Tight on purpose. The panel is anchored to the bottom-right corner
+           and sized to its content, so every millimetre of column gap and
+           padding pushes its LEFT edge further across the shot — and what is
+           over there is the speeder, which is the whole reason anyone looks
+           at this screen. Narrow enough to clear the tail. */
+        gap: 9px 22px;
+        padding: 13px 16px;
         border: 1px solid rgba(143, 196, 232, 0.14);
         border-radius: 3px;
         background: rgba(5, 8, 13, 0.55);
@@ -171,12 +176,12 @@
         -webkit-backdrop-filter: blur(6px);
     }
 
-    .ctl { display: flex; align-items: center; gap: 7px; }
+    .ctl { display: flex; align-items: center; gap: 6px; }
 
     .key {
         display: inline-block;
-        min-width: 22px;
-        padding: 4px 6px;
+        min-width: 20px;
+        padding: 3px 5px;
         border: 1px solid rgba(143, 196, 232, 0.38);
         border-bottom-width: 2px;
         border-radius: 3px;
@@ -190,8 +195,8 @@
     .key.wide { padding: 4px 10px; }
 
     .ctl-l {
-        font-size: 10px;
-        letter-spacing: 0.14em;
+        font-size: 9.5px;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
         color: rgba(190, 208, 226, 0.85);
     }
