@@ -1332,7 +1332,24 @@ export class Wingman {
     }
 
     /** Start this ship on the opening flyover — see SimPilot.flyover. */
+    /**
+     * Wipe this ship's damage back to factory.
+     *
+     * A run starting again is a run starting again: whatever this seat was
+     * carrying when the last one ended — smoke, fire, a hit away from going
+     * down — it does not carry into the new one. Without this an escort that
+     * was burning when the player went in reappears in the opening formation
+     * still burning, which reads as the restart not having happened.
+     */
+    resetDamage() {
+        this.damage = 0;
+        this._hitGrace = 0;
+        this._fateT = 9 + Math.random() * 9;
+        this._burnPrevY = null;
+    }
+
     flyover(player, bx, bz) {
+        this.resetDamage();
         this.pilot.flyover(player, bx, bz);
     }
 

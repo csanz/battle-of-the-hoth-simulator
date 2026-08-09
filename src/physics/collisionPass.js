@@ -891,7 +891,16 @@ export class CollisionPass {
                 this._pDamage = 0;
             }
         }
-        if (this._pDamage >= 1 && this.smoke && this.speeder && this.character) {
+        // Not while going in, and not while lying in the wreck. The ladder's
+        // trail is damage streaming off a craft that is still flying; once
+        // the crash owns the sequence the fire belongs to the wreck, which
+        // burns on its own. Left running, this kept emitting rising fire for
+        // the full twenty seconds from a hull that was hidden and stationary
+        // — a fireball climbing out of the snow beside the body, which is
+        // exactly what the crash camera is pointed at.
+        const crashing = this.character?.crashing || this._pRecover > 0;
+        if (!crashing && this._pDamage >= 1 && this.smoke && this.speeder
+            && this.character) {
             this._pPuffT -= h;
             if (this._pPuffT <= 0) {
                 this._pPuffT = 0.05;
