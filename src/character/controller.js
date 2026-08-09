@@ -48,6 +48,14 @@ const CRASH_FALL_T = 2.1;
  *  the landing arrives ON the 2.1 s clock from any starting height instead of
  *  0.1-0.6 s early depending on where the hit caught the craft. */
 const CRASH_CONTACT = -1.5;
+/** The snow's springiness under a hull that has just arrived at speed, and
+ *  the damping on it. Chosen together: stiff enough that a fast arrival digs
+ *  well under a metre (so it never reaches the hover floor, which is what used
+ *  to stop the fall dead), damped just under critical so the hull beds in with
+ *  a single soft rebound rather than bouncing or creeping down. Comfortably
+ *  stable at the 1/30 s clamped step. */
+const CRASH_SNOW_K = 190;
+const CRASH_SNOW_DAMP = 19;
 /** The hover height the drawn hull rides at (`HOVER` in speeder.js). The
  *  crash places the craft itself rather than leaving it to the hover solver,
  *  so it needs the same reference the presentation uses. */
@@ -283,6 +291,7 @@ export class CharacterController {
         this._crashT = 0;
         this._crashSpin = spinDir || (Math.random() < 0.5 ? -1 : 1);
         this._crashRoll = 0.7;
+        this._crashVY = 0;
         this._crashClimb0 = this._climb;
         this.impactSpin = 0;
         this.controlScramble = 0;
@@ -374,10 +383,50 @@ export class CharacterController {
         // interrupted down to the deck at u = 1 — so it arrives on the clock
         // from any altitude, the same trick the escorts' fall uses. The shape
         // holds the craft up for the first beat and then drops the nose.
-        const u = Math.min(1, this._crashT / CRASH_FALL_T);
-        const s = u * u * (0.6 + 0.4 * u);
         const prevClimb = this._climb;
-        this._climb = this._crashClimb0 + (CRASH_CONTACT - this._crashClimb0) * s;
+        if (this._crashT < CRASH_FALL_T) {
+            // The fall. `s` holds the craft up for the first beat and then
+            // drops its nose, arriving at the snow steepening — which is what
+            // a dead airframe does and what the pitch term needs to read.
+            const u = this._crashT / CRASH_FALL_T;
+            // Steepen, then FLARE. `u²(0.6+0.4u)` alone is fastest at the
+            // instant it arrives — about fourteen metres a second — and no
+            // amount of clever snow underneath makes a stop from that look
+            // like anything but a stop. A dying airframe does not spear in;
+            // it comes down steep and then pancakes as the last of the lift
+            // washes off. So the profile keeps its steepening middle and
+            // rolls the final fifth over into an ease-out, which halves the
+            // arrival rate and leaves the spring below a far easier job.
+            const base = u * u * (0.6 + 0.4 * u);
+            const f = Math.max(0, (u - 0.8) / 0.2);
+            const s = base + (1 - base) * (f * f * (3 - 2 * f));
+            this._climb = this._crashClimb0
+                + (CRASH_CONTACT - this._crashClimb0) * s;
+            // Carry the arrival rate over the boundary. Without it the whole
+            // descent simply STOPS on the frame the profile runs out — ten
+            // metres a second becomes zero between one frame and the next,
+            // which is the moment that reads as the hull being stapled to the
+            // ground rather than hitting it.
+            this._crashVY = h > 1e-6 ? (this._climb - prevClimb) / h : 0;
+        } else {
+            // The plough. It arrives carrying real speed and sheds it into
+            // the snow instead of against a wall: the hull keeps sinking,
+            // less each frame, digs a little past where it will finally lie,
+            // and floats back up to rest. A hard stop and a settle are the
+            // same event a third of a second apart, and the settle is the one
+            // that looks like weight.
+            // Snow that resists like snow: a spring back toward the resting
+            // height, damped, rather than a floor the hull hits. The first
+            // version of this DID bleed the arrival speed gradually — and
+            // then drove straight into the hard clamp a frame later and
+            // stopped dead anyway, which is the whole thing being fixed.
+            // Stiff enough to absorb a fourteen-metre-a-second arrival inside
+            // half a metre, damped to just under critical so it beds in with
+            // one soft rebound instead of bouncing or creeping.
+            this._crashVY += (CRASH_CONTACT - this._climb) * CRASH_SNOW_K * h;
+            this._crashVY -= this._crashVY * CRASH_SNOW_DAMP * h;
+            this._climb += this._crashVY * h;
+        }
         this.climb = this._climb;
         this._climbWant = this._climb;
         // The honest derivative of the profile, not a zero: this is what the
