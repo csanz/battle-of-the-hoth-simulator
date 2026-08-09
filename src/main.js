@@ -438,13 +438,18 @@ async function boot() {
         fire: () => false,
         headLook: () => false,
         separation: () => 0.01,
-        // Deliberately NEGATIVE: the body is LIFTED clear of the surface
-        // rather than bedded into it. Everything else in the herd machinery
-        // sinks — a walker's feet want to be in the snow — but a corpse lying
-        // flat has almost no height to give away, and the crash it arrives
-        // from has usually just cratered the ground under it, so any sink at
-        // all buries the one thing the crash camera is pointed at.
-        sink: () => -0.35,
+        // Negative, but only just.
+        //
+        // The herd's sink is measured from a walker's ROOT, which for a thing
+        // standing on legs is the ground it stands on. The death clip ends
+        // with the body flat, and its mesh comes to rest roughly a third of a
+        // metre below that root — so the 0.08 every other herd uses put the
+        // corpse under the snow entirely, and answering that with -0.35 lifted
+        // it clear of the surface and left it floating. The truth is between
+        // the two: enough lift to cancel the pose's own drop, minus a little,
+        // so what is actually visible is a man bedded a few centimetres into
+        // the crust rather than lying on top of it or buried beneath it.
+        sink: () => -0.2,
         anchor: (i) => {
             const w = wrecks[i];
             return w && w.active ? { x: w.pilotX, z: w.pilotZ } : null;
