@@ -51,6 +51,8 @@ import { OPENING, applyOpening, installShotCapture } from "./core/openingShot.js
 
 // ------------------------------------------------------- module-scope scratch
 const _vel = new THREE.Vector3();
+/** Scratch: where the crash camera is pointed. See the death-cam block. */
+const _camAt = new THREE.Vector3();
 
 /** Beauty clear — linear (§2.6). */
 const CLEAR_COLOR = [0.02, 0.03, 0.05, 1];
@@ -81,7 +83,18 @@ const CRASH_AUDIBLE = 900;
  */
 const DEATH_CAM_RATE = 0.72;
 const DEATH_CAM_DIST = 26;
+/** …and the standoff once the subject is a man rather than a machine. */
+const DEATH_CAM_DIST_PILOT = 13;
 const DEATH_CAM_PITCH = 0.42;
+/**
+ * …and the pitch once the subject is the pilot: nearly level with the snow.
+ *
+ * Looking down at 0.42 is the right angle on a wrecked machine — it shows the
+ * crater and the skid line. It is the wrong angle on a man lying flat, which
+ * from above is a shape on a white field. Down at the deck he is *in front of*
+ * the camera, read against the sky and the burning hull behind him.
+ */
+const DEATH_CAM_PITCH_PILOT = 0.1;
 
 
 // Vercel Web Analytics: page views and visitors on the deployment. The
@@ -421,7 +434,13 @@ async function boot() {
         fire: () => false,
         headLook: () => false,
         separation: () => 0.01,
-        sink: () => 0.08,
+        // Deliberately NEGATIVE: the body is LIFTED clear of the surface
+        // rather than bedded into it. Everything else in the herd machinery
+        // sinks — a walker's feet want to be in the snow — but a corpse lying
+        // flat has almost no height to give away, and the crash it arrives
+        // from has usually just cratered the ground under it, so any sink at
+        // all buries the one thing the crash camera is pointed at.
+        sink: () => -0.35,
         anchor: (i) => {
             const w = wrecks[i];
             return w && w.active ? { x: w.pilotX, z: w.pilotZ } : null;
@@ -625,6 +644,7 @@ async function boot() {
             body.oneshot = null;
             body.react("Death From Back Headshot", { hold: true, linger: 1e9 });
         }
+        return body ?? null;
     };
 
     const enemyFire = [walkers.bolts, walkers2.bolts, atsts.bolts, troopers.bolts];
@@ -865,7 +885,12 @@ async function boot() {
         wrecks, terrain, explosions, spray, smoke, rig, audio, troopers,
         squadImpact: (x, z) => squadImpact(x, 0, z),
         // Where the player's own crash ends up, and what happens after it.
-        onWreck: leaveWreck,
+        onWreck: (x, z, facing) => {
+            // The body becomes the crash camera's subject — see the
+            // death-cam block in the frame loop. An escort's crash goes
+            // through the same door and simply ignores the return.
+            deathCamPilot = leaveWreck(x, z, facing);
+        },
         onRestart: () => startFlyover(),
     });
 
@@ -1246,6 +1271,9 @@ async function boot() {
     let deathCamT = 0;
     /** The framing the player had before the crash, handed back after it. */
     let deathCamDist = 0;
+    /** The body the crash camera is circling — the player's own pilot, once
+     *  they have been thrown clear. Null during the fall and after. */
+    let deathCamPilot = null;
     /**
      * The cockpit's line to the pilot. Silent unless the player pushes the
      * stick during the opening hold — then "stand by" says the lock is
@@ -1589,6 +1617,7 @@ async function boot() {
         // the falling craft, not to the camera watching it.
         let camFacing = speeder ? character.facing : null;
         let camLean = character.lean;
+        let camTarget = character.position;
         if (character.crashing) {
             if (deathCamT === 0) {
                 // Remember the framing to give back afterwards — the player
@@ -1598,19 +1627,36 @@ async function boot() {
             deathCamT += dt;
             camFacing = character.facing + deathCamT * DEATH_CAM_RATE;
             camLean = 0;
-            // Stand off and look down. Close behind is the flying camera's
-            // job; a crash wants the whole wreck in frame with the snow it
-            // ploughed, and the walkers still coming on behind it.
-            rig.distanceTarget = DEATH_CAM_DIST;
-            rig.pitch = expDamp(rig.pitch, DEATH_CAM_PITCH, 1.4, dt);
+            // What the shot is ABOUT is the pilot.
+            //
+            // The wreck is scenery — it lands, it burns, it sits there. The
+            // body thrown clear of it is the only thing in the frame still
+            // doing something: three and a half seconds of dying, played out
+            // in the snow. So once there is a body the camera takes it as its
+            // subject and circles that, with the burning hull swinging
+            // through the background as it goes. Until then (the fall itself,
+            // before anything has hit) it stays on the craft.
+            const body = deathCamPilot;
+            if (body) {
+                _camAt.set(body.position.x, body.position.y + 0.6, body.position.z);
+                camTarget = _camAt;
+            }
+            // Stand off and look down — closer for a man than for a machine,
+            // or the animation the shot exists for is four pixels of orange.
+            rig.distanceTarget = body ? DEATH_CAM_DIST_PILOT : DEATH_CAM_DIST;
+            rig.pitch = expDamp(
+                rig.pitch,
+                body ? DEATH_CAM_PITCH_PILOT : DEATH_CAM_PITCH, 1.4, dt
+            );
         } else if (deathCamT > 0) {
             deathCamT = 0;
+            deathCamPilot = null;
             rig.distanceTarget = deathCamDist || rig.distanceTarget;
         }
         // Flying, the rig is handed the craft's heading and chases it itself —
         // see CameraRig.update — rather than the controller stepping rig.yaw.
         rig.update(
-            dt, character.position, _vel, camLean, character.speed01, camFacing
+            dt, camTarget, _vel, camLean, character.speed01, camFacing
         );
 
         // Jitters the projection and republishes everything the screen-space

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- AT-AT walker, side profile, marching right. Flat two-gray icon:
+       silhouette in steel, details inset in a darker slate so it reads on
+       light and dark tabs alike. -->
+  <g fill="#8b949e">
+    <!-- body -->
+    <rect x="6" y="10" width="38" height="25" rx="4"/>
+    <!-- neck -->
+    <rect x="41" y="18" width="9" height="8"/>
+    <!-- head -->
+    <rect x="47" y="13" width="16" height="14" rx="2.5"/>
+    <!-- hip joints -->
+    <circle cx="14" cy="34" r="3.4"/>
+    <circle cx="36" cy="34" r="3.4"/>
+    <!-- legs: upper, knee, lower, foot — four of them -->
+    <g>
+      <rect x="10" y="34" width="5" height="10" rx="1.5"/>
+      <circle cx="12.5" cy="44" r="2.6"/>
+      <rect x="10.5" y="44" width="4" height="10" rx="1.2"/>
+      <rect x="7.5" y="52.5" width="10" height="5.5" rx="1.6"/>
+    </g>
+    <g>
+      <rect x="19" y="34" width="5" height="9" rx="1.5"/>
+      <circle cx="21.5" cy="43" r="2.6"/>
+      <rect x="19.5" y="43" width="4" height="11" rx="1.2"/>
+      <rect x="16.5" y="52.5" width="10" height="5.5" rx="1.6"/>
+    </g>
+    <g>
+      <rect x="31" y="34" width="5" height="9" rx="1.5"/>
+      <circle cx="33.5" cy="43" r="2.6"/>
+      <rect x="31.5" y="43" width="4" height="11" rx="1.2"/>
+      <rect x="28.5" y="52.5" width="10" height="5.5" rx="1.6"/>
+    </g>
+    <g>
+      <rect x="40" y="34" width="5" height="10" rx="1.5"/>
+      <circle cx="42.5" cy="44" r="2.6"/>
+      <rect x="40.5" y="44" width="4" height="10" rx="1.2"/>
+      <rect x="37.5" y="52.5" width="10" height="5.5" rx="1.6"/>
+    </g>
+  </g>
+  <!-- inset details, darker -->
+  <g fill="#3d434b">
+    <!-- body grill -->
+    <rect x="11" y="14" width="3" height="9" rx="1.2"/>
+    <rect x="16" y="14" width="3" height="9" rx="1.2"/>
+    <rect x="21" y="14" width="3" height="9" rx="1.2"/>
+    <rect x="26" y="14" width="3" height="9" rx="1.2"/>
+    <!-- body port -->
+    <circle cx="36" cy="18" r="2.2"/>
+    <!-- viewport slit -->
+    <rect x="50" y="18" width="11" height="3.5" rx="1.2"/>
+    <!-- chin guns -->
+    <rect x="58" y="27" width="2" height="4" rx="0.8"/>
+    <rect x="53" y="27" width="2" height="3" rx="0.8"/>
+  </g>
+</svg>

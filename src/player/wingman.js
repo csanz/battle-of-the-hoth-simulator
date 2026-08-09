@@ -223,7 +223,7 @@ const _av = { w: 0, side: 0, top: 0, h: 0, tHit: 0 };
  * @param {{x:number,z:number}} vel world velocity
  * @param {boolean} withFire stage two — flame with the smoke
  */
-export function emitBurnTrail(smoke, pos, facing, vel, withFire) {
+export function emitBurnTrail(smoke, pos, facing, vel, withFire, vy = 0) {
     const back = /** @type {number} */ (S.burnBackZ ?? 2.4);
     const lift = /** @type {number} */ (S.burnY ?? 0.95);
     const bx = pos.x - Math.sin(facing) * back;
@@ -233,7 +233,13 @@ export function emitBurnTrail(smoke, pos, facing, vel, withFire) {
     smoke.emit(
         bx, by, bz,
         vel.x * 0.22 + (Math.random() - 0.5) * 0.8,
-        1.1 + Math.random() * 0.6,
+        // The rise is what a burning craft's trail does in level flight, and
+        // exactly the wrong thing while it is going in: a hull dropping ten
+        // metres a second falls straight out from under its own fire, which
+        // is then left hanging in the air above the crash. `vy` is the
+        // craft's own vertical rate, carried into the puff so the flame stays
+        // welded to the machine whatever the machine is doing.
+        1.1 + Math.random() * 0.6 + vy,
         vel.z * 0.22 + (Math.random() - 0.5) * 0.8,
         0.5 + Math.random() * 0.25, 1.7,
         1.5 + Math.random() * 0.7,
@@ -243,7 +249,7 @@ export function emitBurnTrail(smoke, pos, facing, vel, withFire) {
         smoke.emit(
             bx, by - 0.25, bz,
             vel.x * 0.72 + (Math.random() - 0.5) * 1.2,
-            0.9 + Math.random() * 0.8,
+            0.9 + Math.random() * 0.8 + vy,
             vel.z * 0.72 + (Math.random() - 0.5) * 1.2,
             0.62 + Math.random() * 0.25, 1.4,
             0.42 + Math.random() * 0.2,
@@ -1289,8 +1295,13 @@ export class Wingman {
                 // machine it is supposed to be burning.
                 const hull = this.craft ? this.craft.position : P.position;
                 const yaw = this.craft ? this.craft.yaw : P.facing;
+                // The pilot's own vertical rate, so a ship on its way down
+                // wears its fire instead of trailing it upward.
+                const vy = (hull.y - (this._burnPrevY ?? hull.y)) / 0.05;
+                this._burnPrevY = hull.y;
                 emitBurnTrail(
-                    fx.smoke, hull, yaw, P.velocity, this.damage >= 2
+                    fx.smoke, hull, yaw, P.velocity, this.damage >= 2,
+                    Math.max(-14, Math.min(0, vy))
                 );
             }
         }

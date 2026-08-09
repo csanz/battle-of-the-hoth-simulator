@@ -191,6 +191,8 @@ export class CollisionPass {
         this._pGrace = 0;
         this._pBurnT = 0;
         this._pPuffT = 0;
+        /** Last hull height, for the burn trail's inherited fall rate. */
+        this._burnPrevY = null;
         /** Seconds left lying in the snow; 0 when not crashed. */
         this._pRecover = 0;
     }
@@ -893,9 +895,18 @@ export class CollisionPass {
             this._pPuffT -= h;
             if (this._pPuffT <= 0) {
                 this._pPuffT = 0.05;
+                // The hull's own vertical rate goes into the puff. A craft
+                // going in drops ten metres a second, and a flame that only
+                // ever rises is left hanging in the air above the wreck —
+                // fire floating over an empty patch of snow. Clamped to
+                // falling only, so level flight keeps the trail it had.
+                const hy = this.speeder.position.y;
+                const vy = (hy - (this._burnPrevY ?? hy)) / 0.05;
+                this._burnPrevY = hy;
                 emitBurnTrail(
                     this.smoke, this.speeder.position, this.character.facing,
-                    this.character.velocity, this._pDamage >= 2
+                    this.character.velocity, this._pDamage >= 2,
+                    Math.max(-14, Math.min(0, vy))
                 );
             }
         }
