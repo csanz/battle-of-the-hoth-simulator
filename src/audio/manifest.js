@@ -276,6 +276,19 @@ export const AUDIO_MANIFEST = {
     // "once": a run down the line crosses two or three machines inside a couple
     // of seconds, and each of them arming separately would stack the same
     // 1.7 s sample over itself. One report per sweep, not one per leg.
+    // The player's own crash, whole. Like `speederCrash2` this is not a
+    // report but a timeline — the hit, the fall, and the impact at 1.8 s —
+    // so it is fired ONCE when the craft starts going in and nothing speaks
+    // again at the ground. The fall takes 2.1 s, so it is played 0.3 s late
+    // to put its own impact on the frame the hull actually arrives.
+    speederCrash3: {
+        url: "audio/speeder-crash-3.mp3",
+        bus: "sfx",
+        gain: 0.95,
+        minGap: 4,
+        needs: "speeder",
+    },
+
     walkerFlyby: {
         url: "audio/walker-flyby.mp3",
         bus: "sfx",

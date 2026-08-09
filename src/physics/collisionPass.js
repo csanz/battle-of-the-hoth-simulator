@@ -97,6 +97,11 @@ const HULL_SFX_GAIN = { hit: 0.45, crash: 1.0 };
 const SHOT_AUDIBLE = 420;
 /** …and for an airframe exploding, which carries further. See `_bang`. */
 const CRASH_AUDIBLE = 900;
+/** Seconds into `speeder-crash-3.mp3` at which it hits the ground, and how
+ *  long the player's fall takes (`CRASH_FALL_T` in the controller). The
+ *  difference is how late the sample is fired so the two coincide. */
+const CRASH_SFX_IMPACT = 1.8;
+const CRASH_FALL = 2.1;
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -668,7 +673,7 @@ export class CollisionPass {
      * @param {number} rate playback rate
      * @param {string} [key] manifest key; the fuel-and-fire report by default
      */
-    _bang(px, pz, gain, rate, key = "speederCrash") {
+    _bang(px, pz, gain, rate, key = "speederCrash", lead = 0) {
         if (!this.audio || !this.character) return;
         const d = Math.hypot(
             px - this.character.position.x, pz - this.character.position.z
@@ -679,7 +684,7 @@ export class CollisionPass {
         this.audio.play(key, {
             gain: gain * near * near * near,
             rate,
-            delay: Math.min(1.6, d / 343),
+            delay: lead + Math.min(1.6, d / 343),
         });
     }
 
@@ -774,7 +779,20 @@ export class CollisionPass {
         // y is walked down to land it at hull height — same as `onKillHit`.
         const hull = this.speeder ? this.speeder.position : c?.position;
         if (hull) this.explosions?.impact(hull.x, hull.y - 2.4, hull.z, true, true);
-        if (hull) this._bang(hull.x, hull.z, 1.0, 1.0);
+        // The crash, whole, fired once here at the top of the fall.
+        //
+        // `speeder-crash-3.mp3` is not a report — it is a timeline, with its
+        // own impact at 1.8 s. The fall takes CRASH_FALL, so it goes out
+        // CRASH_FALL - 1.8 late and its impact lands on the frame the hull
+        // actually arrives. Nothing speaks again at the ground: the sample
+        // already contains that moment, and a second report on top of it
+        // would smear the one thing it exists to punctuate.
+        if (hull) {
+            this._bang(
+                hull.x, hull.z, 1.0, 1.0, "speederCrash3",
+                Math.max(0, CRASH_FALL - CRASH_SFX_IMPACT)
+            );
+        }
         this.rig?.addTrauma(1);
         // Which way it rolls in: keep whatever the impact was already turning
         // the nose, so the tumble is a continuation of the hit and not a new
@@ -807,7 +825,8 @@ export class CollisionPass {
             const facing = c.facing;
 
             this.explosions?.impact(x, y, z, true, true);
-            this._bang(x, z, 1.0, 0.95);
+            // No report here — see `_trip`. The crash sample started at the
+            // top of the fall and its own impact is landing on this frame.
             this.rig?.addTrauma(1);
             // The hull stays where it died, and the pilot beside it — the
             // same graveyard an escort goes to, because a snowspeeder that
