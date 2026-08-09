@@ -161,13 +161,17 @@
        glance against the photograph behind them. */
     .controls {
         display: grid;
-        grid-template-columns: auto auto;
-        /* Tight on purpose. The panel is anchored to the bottom-right corner
-           and sized to its content, so every millimetre of column gap and
-           padding pushes its LEFT edge further across the shot — and what is
-           over there is the speeder, which is the whole reason anyone looks
-           at this screen. Narrow enough to clear the tail. */
-        gap: 9px 22px;
+        /* ONE column, not two.
+           The panel is anchored to the bottom-right corner and sized to its
+           own content, so its width is measured leftward across the shot —
+           and what lives over there is the speeder, which is the entire
+           reason anyone is looking at this screen. Two columns of key caps
+           and labels reach far enough to sit on the hull however tightly
+           they are packed. A single column is barely a fifth of the frame
+           wide, stacks down the right-hand edge under the walkers, and
+           leaves the whole craft in the clear. */
+        grid-template-columns: auto;
+        gap: 9px;
         padding: 13px 16px;
         border: 1px solid rgba(143, 196, 232, 0.14);
         border-radius: 3px;

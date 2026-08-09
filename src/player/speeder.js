@@ -503,9 +503,22 @@ export class Speeder {
         // Unless the craft is a wreck: `grounded` kills the whole hover — no
         // lift, no bob, no floor — and lays the belly straight into the snow,
         // slightly under the surface so the drifts read as already claiming it.
+        // The speed lift, on a lag.
+        //
+        // A repulsorlift pushing harder the faster it goes is right, but
+        // taking that straight off `speed01` welds the hull's altitude to the
+        // throttle: the craft drops a metre the instant it stops
+        // accelerating. It is most visible at the handover out of the
+        // opening, where the player is given a coasting craft and has not
+        // reached for the throttle yet — the speeder visibly sinks on the
+        // exact beat it is supposed to feel handed over. Easing the term
+        // costs nothing at a steady cruise (it converges in well under a
+        // second) and turns every throttle change into a settle rather than
+        // a step.
+        this._liftSpeed = expDamp(this._liftSpeed ?? speed01, speed01, 1.3, dt);
         const lift = this.grounded
             ? -0.15
-            : HOVER + HOVER_SPEED_LIFT * speed01 + (c.climb || 0);
+            : HOVER + HOVER_SPEED_LIFT * this._liftSpeed + (c.climb || 0);
         let wantY = ground + lift
             + (this.grounded ? 0 : Math.sin(this._bob) * BOB_HEIGHT * idle);
         if (!this.grounded) wantY = Math.max(wantY, groundTrack + 1.2);
