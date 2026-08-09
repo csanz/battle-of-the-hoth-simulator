@@ -85,6 +85,10 @@ const DEATH_CAM_RATE = 0.72;
 const DEATH_CAM_DIST = 26;
 /** …and the standoff once the subject is a man rather than a machine. */
 const DEATH_CAM_DIST_PILOT = 13;
+/** Metres short of the battle a respawning craft comes back in at — near
+ *  enough to be in the fight within seconds, far enough to be a flight back
+ *  rather than a teleport into the middle of it. */
+const RESPAWN_OUT = 260;
 const DEATH_CAM_PITCH = 0.42;
 /**
  * …and the pitch once the subject is the pilot: nearly level with the snow.
@@ -885,13 +889,40 @@ async function boot() {
         wrecks, terrain, explosions, spray, smoke, rig, audio, troopers,
         squadImpact: (x, z) => squadImpact(x, 0, z),
         // Where the player's own crash ends up, and what happens after it.
+        // Back in the air where the fight is, and flying immediately.
+        //
+        // Not the opening. Dying mid-battle is not the same event as
+        // arriving at one: the escorts are in the middle of their own runs
+        // and have no business being teleported back into an echelon, and
+        // freezing the stick for a transmission the player has already seen
+        // is a punishment on top of the crash. So this only ever touches the
+        // player's own craft — staged back down the approach far enough that
+        // they fly in rather than pop into existence, pointed at the battle,
+        // already making way, with control.
+        onRestart: () => {
+            if (S.speeder !== true) return;
+            let bx = 0, bz = 0;
+            const n = Math.min(walkers.count, walkers.walkers.length);
+            for (let i = 0; i < n; i++) {
+                bx += walkers.walkers[i].position.x;
+                bz += walkers.walkers[i].position.z;
+            }
+            if (n > 0) { bx /= n; bz /= n; }
+            const h = Math.atan2(
+                bx - character.position.x, bz - character.position.z
+            );
+            character.position.x = bx - Math.sin(h) * RESPAWN_OUT;
+            character.position.z = bz - Math.cos(h) * RESPAWN_OUT;
+            character.facing = h;
+            character.velocity.set(Math.sin(h) * 24, 0, Math.cos(h) * 24);
+            input.riseLevel = 3;
+        },
         onWreck: (x, z, facing) => {
             // The body becomes the crash camera's subject — see the
             // death-cam block in the frame loop. An escort's crash goes
             // through the same door and simply ignores the return.
             deathCamPilot = leaveWreck(x, z, facing);
         },
-        onRestart: () => startFlyover(),
     });
 
     // The escorts are told what is solid. Their constructor only ever saw the
